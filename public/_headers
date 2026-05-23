@@ -8,10 +8,13 @@
   Cache-Control: no-cache
 
 /assets/css/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=300, must-revalidate
 
 /assets/js/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=300, must-revalidate
 
 /assets/img/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=3600
+
+/assets/video/*
+  Cache-Control: public, max-age=3600
