@@ -316,9 +316,30 @@ img, svg { display: block; max-width: 100%; }
 
 .mf-nav {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 10px;
   padding: 20px 0;
+}
+
+.mf-back {
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text);
+  padding: 0;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.mf-back:active {
+  transform: scale(0.94);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .mf-logo {
