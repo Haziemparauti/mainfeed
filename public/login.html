@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0e" />
+  <title>Log in — Mainfeed</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/icon.svg" />
+  <link rel="stylesheet" href="/assets/css/style.css" />
+</head>
+<body class="mf-auth">
+
+  <header class="mf-nav">
+    <a href="/" class="mf-logo">Mainfeed</a>
+  </header>
+
+  <main class="mf-form-wrap">
+    <section class="mf-step">
+      <h1>Welcome back</h1>
+      <p class="mf-sub">Log in to your Mainfeed.</p>
+      <label class="mf-field">
+        <input type="text" id="mf-login-id" placeholder="@handle or email" autocomplete="username" />
+      </label>
+      <label class="mf-field">
+        <input type="password" id="mf-login-password" placeholder="Password" autocomplete="current-password" />
+      </label>
+      <button class="mf-cta mf-cta-block" data-action="login">Log in</button>
+      <p class="mf-foot-link">
+        Don't have a Mainfeed yet? <a href="/signup.html">Make one</a>
+      </p>
+    </section>
+  </main>
+
+  <script src="/assets/js/auth.js" type="module"></script>
+</body>
+</html>

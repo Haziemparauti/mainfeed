@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0e" />
+  <title>Sign up — Mainfeed</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/icon.svg" />
+  <link rel="stylesheet" href="/assets/css/style.css" />
+</head>
+<body class="mf-auth">
+
+  <header class="mf-nav">
+    <a href="/" class="mf-logo">Mainfeed</a>
+  </header>
+
+  <main class="mf-form-wrap">
+    <div class="mf-progress" data-step="1">
+      <span></span><span></span><span></span><span></span>
+    </div>
+
+    <section class="mf-step" data-step="1">
+      <h1>Pick your handle</h1>
+      <p class="mf-sub">This becomes your Mainfeed URL. Lowercase letters and numbers only.</p>
+      <label class="mf-field">
+        <span class="mf-prefix">mainfeed.app/@</span>
+        <input type="text" id="mf-handle" placeholder="yourname" autocomplete="off" maxlength="20" pattern="[a-z0-9]+" inputmode="text" />
+      </label>
+      <label class="mf-field">
+        <input type="email" id="mf-email" placeholder="Email address" autocomplete="email" />
+      </label>
+      <label class="mf-field">
+        <input type="password" id="mf-password" placeholder="Password (8+ characters)" minlength="8" autocomplete="new-password" />
+      </label>
+      <button class="mf-cta mf-cta-block" data-action="next-1">Continue</button>
+    </section>
+
+    <section class="mf-step" data-step="2" hidden>
+      <h1>Upload 5 selfies</h1>
+      <p class="mf-sub">Front-facing, clear lighting. AI checks they match each other. We use these to generate content of you.</p>
+      <div class="mf-selfie-grid">
+        <label class="mf-selfie-slot"><input type="file" accept="image/*" /><span>+</span></label>
+        <label class="mf-selfie-slot"><input type="file" accept="image/*" /><span>+</span></label>
+        <label class="mf-selfie-slot"><input type="file" accept="image/*" /><span>+</span></label>
+        <label class="mf-selfie-slot"><input type="file" accept="image/*" /><span>+</span></label>
+        <label class="mf-selfie-slot"><input type="file" accept="image/*" /><span>+</span></label>
+        <label class="mf-selfie-slot"><input type="file" accept="image/*" /><span>+</span></label>
+      </div>
+      <button class="mf-cta mf-cta-block" data-action="next-2">Continue</button>
+    </section>
+
+    <section class="mf-step" data-step="3" hidden>
+      <h1>Quick face check</h1>
+      <p class="mf-sub">30 seconds. Record a short selfie video so we know it's actually you. Stops imposters from making a Mainfeed in your name.</p>
+      <div class="mf-liveness-stage" id="mf-liveness-stage">
+        <button class="mf-cta mf-cta-block" data-action="start-liveness">Start face check</button>
+      </div>
+    </section>
+
+    <section class="mf-step" data-step="4" hidden>
+      <h1>One last thing</h1>
+      <p class="mf-sub">Three quick agreements and your Mainfeed goes live.</p>
+      <label class="mf-check">
+        <input type="checkbox" id="mf-consent-age" />
+        <span>I'm 18 or older.</span>
+      </label>
+      <label class="mf-check">
+        <input type="checkbox" id="mf-consent-ai" />
+        <span>I consent to my face being used to generate AI content for my private feed. I can delete anytime.</span>
+      </label>
+      <label class="mf-check">
+        <input type="checkbox" id="mf-consent-terms" />
+        <span>I agree to the <a href="/terms.html">Terms</a> and <a href="/privacy.html">Privacy</a>.</span>
+      </label>
+      <button class="mf-cta mf-cta-block" data-action="finish">Create my Mainfeed</button>
+    </section>
+
+  </main>
+
+  <script src="/assets/js/auth.js" type="module"></script>
+</body>
+</html>

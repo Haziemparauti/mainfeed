@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b0b0e" />
+  <title>Mainfeed</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/icon.svg" />
+  <link rel="stylesheet" href="/assets/css/style.css" />
+</head>
+<body class="mf-app">
+
+  <header class="mf-app-header">
+    <a href="/app.html" class="mf-logo">Mainfeed</a>
+    <a href="/profile.html" class="mf-avatar">
+      <span id="mf-avatar-initial">?</span>
+    </a>
+  </header>
+
+  <main class="mf-app-main">
+
+    <section class="mf-diary">
+      <label class="mf-diary-label" for="mf-diary-input">What's on your mind?</label>
+      <textarea
+        id="mf-diary-input"
+        class="mf-diary-input"
+        placeholder="Sleepy. Just woke up at 4pm. Hyped for the weekend. Whatever you're feeling."
+        rows="3"
+        maxlength="500"
+      ></textarea>
+      <div class="mf-diary-foot">
+        <span class="mf-diary-count"><span id="mf-diary-len">0</span>/500</span>
+        <button class="mf-cta mf-cta-sm" id="mf-diary-submit">Make content</button>
+      </div>
+    </section>
+
+    <section class="mf-feed" id="mf-feed">
+      <div class="mf-feed-empty">
+        <h2>Your Mainfeed is empty</h2>
+        <p>Tell us about your day above and AI will make content about you.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/assets/js/app.js" type="module"></script>
+</body>
+</html>

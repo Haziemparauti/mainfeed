@@ -1,0 +1,527 @@
+/* Mainfeed — main stylesheet (v0) */
+
+:root {
+  --bg: #0b0b0e;
+  --surface: #16161b;
+  --surface-2: #1d1d23;
+  --border: #2a2a30;
+  --text: #fafafa;
+  --text-mute: #9a9aa3;
+  --text-dim: #6a6a73;
+  --accent: #ff7a59;
+  --accent-2: #ff5b8a;
+  --accent-grad: linear-gradient(135deg, var(--accent), var(--accent-2));
+  --radius: 16px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+  --container: 460px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html {
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  overscroll-behavior: none;
+  background: var(--bg);
+}
+
+a { color: inherit; text-decoration: none; }
+button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+input, textarea { font: inherit; color: inherit; }
+img, svg { display: block; max-width: 100%; }
+
+/* ============ LAYOUT ============ */
+
+.mf-landing, .mf-auth, .mf-app {
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 20px;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+/* ============ NAV ============ */
+
+.mf-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 0;
+}
+
+.mf-logo {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.mf-link {
+  font-size: 14px;
+  color: var(--text-mute);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+}
+
+/* ============ BUTTONS ============ */
+
+.mf-cta {
+  display: inline-block;
+  background: var(--accent-grad);
+  color: white;
+  font-weight: 600;
+  font-size: 17px;
+  padding: 18px 28px;
+  border-radius: var(--radius-pill);
+  border: none;
+  letter-spacing: -0.01em;
+  box-shadow: 0 8px 32px rgba(255, 122, 89, 0.25);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  text-align: center;
+}
+
+.mf-cta:active {
+  transform: scale(0.97);
+  box-shadow: 0 4px 16px rgba(255, 122, 89, 0.2);
+}
+
+.mf-cta-block {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+}
+
+.mf-cta-sm {
+  padding: 12px 20px;
+  font-size: 15px;
+}
+
+/* ============ LANDING ============ */
+
+.mf-hero {
+  padding: 56px 0 64px;
+  text-align: center;
+}
+
+.mf-hero-title {
+  font-size: 44px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-weight: 800;
+  margin-bottom: 20px;
+}
+
+.mf-hero-sub {
+  font-size: 17px;
+  color: var(--text-mute);
+  margin-bottom: 36px;
+  line-height: 1.5;
+}
+
+.mf-hero-foot {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.mf-how {
+  padding: 32px 0;
+  display: grid;
+  gap: 16px;
+}
+
+.mf-how-step {
+  background: var(--surface);
+  padding: 24px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.mf-how-num {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.mf-how-step h2 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+
+.mf-how-step p {
+  font-size: 15px;
+  color: var(--text-mute);
+}
+
+.mf-philosophy {
+  padding: 64px 0 48px;
+  text-align: center;
+}
+
+.mf-philosophy p {
+  font-size: 18px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.mf-philosophy p:last-of-type {
+  margin-bottom: 32px;
+}
+
+.mf-foot {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 32px 0 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.mf-foot-copy {
+  margin-left: auto;
+}
+
+/* ============ AUTH / SIGNUP ============ */
+
+.mf-form-wrap {
+  padding: 16px 0 48px;
+}
+
+.mf-step h1 {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  margin-bottom: 8px;
+}
+
+.mf-sub {
+  color: var(--text-mute);
+  font-size: 15px;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.mf-field {
+  display: flex;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 16px;
+  margin-bottom: 12px;
+  height: 56px;
+  transition: border-color 0.15s ease;
+}
+
+.mf-field:focus-within {
+  border-color: var(--accent);
+}
+
+.mf-field input {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 16px;
+}
+
+.mf-field input::placeholder {
+  color: var(--text-dim);
+}
+
+.mf-prefix {
+  color: var(--text-mute);
+  font-size: 14px;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+/* Progress dots */
+.mf-progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 32px;
+}
+
+.mf-progress span {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.mf-progress[data-step="1"] span:nth-child(-n+1),
+.mf-progress[data-step="2"] span:nth-child(-n+2),
+.mf-progress[data-step="3"] span:nth-child(-n+3),
+.mf-progress[data-step="4"] span:nth-child(-n+4) {
+  background: var(--accent-grad);
+}
+
+/* Selfie upload grid */
+.mf-selfie-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mf-selfie-slot {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--surface);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.mf-selfie-slot input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.mf-selfie-slot span {
+  font-size: 32px;
+  color: var(--text-dim);
+  font-weight: 300;
+}
+
+.mf-selfie-slot--filled {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+.mf-selfie-slot--filled span {
+  display: none;
+}
+
+/* Liveness stage */
+.mf-liveness-stage {
+  padding: 20px 0;
+  text-align: center;
+}
+
+/* Checkbox */
+.mf-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  font-size: 15px;
+  color: var(--text-mute);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.mf-check input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px;
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.mf-check input[type="checkbox"]:checked {
+  background: var(--accent-grad);
+  border-color: transparent;
+}
+
+.mf-check input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 3px;
+  width: 6px;
+  height: 11px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.mf-check a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.mf-foot-link {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-mute);
+}
+
+.mf-foot-link a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ============ APP ============ */
+
+.mf-app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+  border-bottom: 1px solid var(--border);
+}
+
+.mf-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--text-mute);
+}
+
+.mf-app-main {
+  padding: 20px 0 60px;
+}
+
+.mf-diary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.mf-diary-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.mf-diary-input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  resize: none;
+  font-size: 16px;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.mf-diary-input::placeholder {
+  color: var(--text-dim);
+}
+
+.mf-diary-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mf-diary-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.mf-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mf-feed-empty {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--text-mute);
+}
+
+.mf-feed-empty h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.mf-feed-empty p {
+  font-size: 15px;
+}
+
+.mf-piece {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.mf-piece-media {
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--surface-2);
+  display: block;
+}
+
+.mf-piece-body {
+  padding: 14px 16px;
+}
+
+.mf-piece-caption {
+  font-size: 15px;
+  line-height: 1.4;
+  margin-bottom: 12px;
+}
+
+.mf-piece-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mf-piece-action {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mf-piece-action:active {
+  background: var(--border);
+}

@@ -1,0 +1,14 @@
+.DS_Store
+Thumbs.db
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+*.log
+.env
+.env.*
+*.bak
+.vscode/
+.idea/
+dist/
+build/

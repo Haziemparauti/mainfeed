@@ -1,0 +1,28 @@
+name = "mainfeed-api"
+main = "src/index.js"
+compatibility_date = "2026-05-23"
+
+# D1 binding (set database_id after running: wrangler d1 create mainfeed-db)
+[[d1_databases]]
+binding = "DB"
+database_name = "mainfeed-db"
+database_id = "PLACEHOLDER_RUN_WRANGLER_D1_CREATE"
+
+# R2 buckets
+[[r2_buckets]]
+binding = "CONTENT"
+bucket_name = "mainfeed-content"
+
+[[r2_buckets]]
+binding = "SELFIES"
+bucket_name = "mainfeed-selfies"
+
+# Secrets (set via `wrangler secret put`):
+#   FAL_API_KEY          — Fal.ai image/video generation
+#   PERSONA_API_KEY      — Persona liveness verification
+#   ADMIN_TOKEN          — admin/takedown endpoints
+#   PADDLE_API_KEY       — payment processor (set when monetization lands)
+#   PADDLE_WEBHOOK_SECRET — payment webhook verification
+
+[vars]
+ENVIRONMENT = "production"
