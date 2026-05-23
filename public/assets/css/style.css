@@ -62,7 +62,7 @@ img, svg { display: block; max-width: 100%; }
   min-height: 100dvh;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  overflow: hidden;
+  overflow: clip;
   isolation: isolate;
   background: var(--bg);
 }
