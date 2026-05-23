@@ -368,7 +368,7 @@ async function handleFeed(request, env, origin) {
   const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10));
 
   const rows = await env.DB.prepare(
-    `SELECT id, type, caption, mime_type, width, height, duration, created_at
+    `SELECT id, type, caption, mime_type, width, height, duration, created_at, public
      FROM generated_pieces
      WHERE user_id = ? AND deleted_at IS NULL
      ORDER BY created_at DESC LIMIT ? OFFSET ?`
@@ -384,6 +384,7 @@ async function handleFeed(request, env, origin) {
     duration: p.duration,
     created_at: p.created_at,
     file_url: `/api/piece/${p.id}/file`,
+    public: !!p.public,
   }));
 
   return json({ ok: true, pieces, total: pieces.length }, {}, origin);
@@ -432,6 +433,75 @@ async function handlePieceDelete(request, env, origin, pieceId) {
   ).bind(now(), pieceId).run();
 
   return json({ ok: true }, {}, origin);
+}
+
+// Toggle public flag on a piece (owner only)
+async function handlePiecePublish(request, env, origin, pieceId, value) {
+  const r = await requireSession(request, env, origin);
+  if (r.error) return r.error;
+
+  const piece = await env.DB.prepare(
+    'SELECT user_id FROM generated_pieces WHERE id = ? AND deleted_at IS NULL'
+  ).bind(pieceId).first();
+  if (!piece) return errResp('not_found', 404, origin);
+  if (piece.user_id !== r.session.user_id) return errResp('forbidden', 403, origin);
+
+  await env.DB.prepare(
+    'UPDATE generated_pieces SET public = ? WHERE id = ?'
+  ).bind(value ? 1 : 0, pieceId).run();
+
+  return json({ ok: true, public: value ? 1 : 0 }, {}, origin);
+}
+
+// Public profile — no auth, returns user's public pieces only
+async function handlePublicProfile(request, env, origin, handle) {
+  const h = String(handle || '').toLowerCase().trim();
+  if (!isHandle(h)) return errResp('invalid_handle', 400, origin);
+
+  const user = await env.DB.prepare(
+    'SELECT id, handle FROM users WHERE handle = ? AND deleted_at IS NULL'
+  ).bind(h).first();
+  if (!user) return errResp('not_found', 404, origin);
+
+  const rows = await env.DB.prepare(
+    `SELECT id, type, caption, mime_type, width, height, created_at
+     FROM generated_pieces
+     WHERE user_id = ? AND deleted_at IS NULL AND public = 1
+     ORDER BY created_at DESC LIMIT 50`
+  ).bind(user.id).all();
+
+  const pieces = (rows.results || []).map((p) => ({
+    id: p.id,
+    type: p.type,
+    caption: p.caption,
+    mime: p.mime_type,
+    width: p.width,
+    height: p.height,
+    created_at: p.created_at,
+    file_url: `/api/piece/${p.id}/public-file`,
+  }));
+
+  return json({ ok: true, user: { handle: user.handle }, pieces }, {}, origin);
+}
+
+// Public file serving — no auth, only if piece is published
+async function handlePublicPieceFile(request, env, origin, pieceId) {
+  const piece = await env.DB.prepare(
+    'SELECT r2_key, mime_type, public FROM generated_pieces WHERE id = ? AND deleted_at IS NULL'
+  ).bind(pieceId).first();
+  if (!piece || !piece.public) return errResp('not_found', 404, origin);
+
+  const obj = await env.CONTENT.get(piece.r2_key);
+  if (!obj) return errResp('file_missing', 404, origin);
+
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': piece.mime_type || 'application/octet-stream',
+      'Cache-Control': 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+      ...cors(origin),
+    }
+  });
 }
 
 // ============ Generation pipeline (Workers AI: Llama 3.1 + Flux Schnell) ============
@@ -507,48 +577,38 @@ caption: "POV: surviving Monday and immediately needing to recover" -> young per
 
 Output ONLY the visual description. No quotes, no preamble.`;
 
-// Welcome scenarios — every new user gets one of these randomly
+// Welcome scenarios — every new user gets one of these randomly (30 variants)
 const WELCOME_SCENARIOS = [
-  {
-    caption: 'POV: you already regret signing up for your own main character feed',
-    prompt: 'young person in dim bedroom holding phone, illuminated by phone screen glow, slightly worried slightly intrigued expression, soft evening light, cinematic candid'
-  },
-  {
-    caption: 'POV: you just signed up and already worried what the AI is gonna say',
-    prompt: 'young person looking at phone with raised eyebrows, slight concerned smile, soft indoor light, candid film still'
-  },
-  {
-    caption: 'POV: stepping into your main character arc you didn\'t ask for',
-    prompt: 'young person standing in dramatic doorway with confident walking pose, golden hour light streaming in behind, cinematic film still'
-  },
-  {
-    caption: 'POV: realising the AI knows you better than you do',
-    prompt: 'young person staring wide-eyed at phone screen in dim bedroom, blue screen glow on face, slight panic, dramatic film still'
-  },
-  {
-    caption: 'me explaining to my friends why i made a mainfeed:',
-    prompt: 'young person mid-conversation gesturing with hands, slightly defensive smile, cozy cafe or living room setting, warm natural lighting'
-  },
-  {
-    caption: 'when the app you just signed up for already starts roasting you',
-    prompt: 'young person looking at phone mouth slightly open in disbelief, slight smile, soft indoor lighting, candid'
-  },
-  {
-    caption: 'POV: signed up for the app where i am the only protagonist',
-    prompt: 'young person walking confidently with phone in hand, blurred soft background, cinematic depth of field, golden hour light'
-  },
-  {
-    caption: 'first day on mainfeed energy',
-    prompt: 'young person leaning back on couch with phone, content small smile, cozy living room with warm evening light'
-  },
-  {
-    caption: 'POV: about to find out what the AI thinks of you',
-    prompt: 'young person staring intently at phone, slight nervous smile, late afternoon golden light through window, candid'
-  },
-  {
-    caption: 'POV: trapped on an app that only generates content about me',
-    prompt: 'young person on bed surrounded by pillows, phone held close to face, slight dazed amused expression, warm bedroom lighting'
-  },
+  { caption: 'POV: you already regret signing up for your own main character feed', prompt: 'young person in dim bedroom holding phone, illuminated by phone screen glow, slightly worried slightly intrigued expression, soft evening light, cinematic candid' },
+  { caption: 'POV: you just signed up and already worried what the AI is gonna say', prompt: 'young person looking at phone with raised eyebrows, slight concerned smile, soft indoor light, candid film still' },
+  { caption: 'POV: stepping into your main character arc you didn\'t ask for', prompt: 'young person standing in dramatic doorway with confident walking pose, golden hour light streaming in behind, cinematic film still' },
+  { caption: 'POV: realising the AI knows you better than you do', prompt: 'young person staring wide-eyed at phone screen in dim bedroom, blue screen glow on face, slight panic, dramatic film still' },
+  { caption: 'me explaining to my friends why i made a mainfeed:', prompt: 'young person mid-conversation gesturing with hands, slightly defensive smile, cozy cafe or living room setting, warm natural lighting' },
+  { caption: 'when the app you just signed up for already starts roasting you', prompt: 'young person looking at phone mouth slightly open in disbelief, slight smile, soft indoor lighting, candid' },
+  { caption: 'POV: signed up for the app where i am the only protagonist', prompt: 'young person walking confidently with phone in hand, blurred soft background, cinematic depth of field, golden hour light' },
+  { caption: 'first day on mainfeed energy', prompt: 'young person leaning back on couch with phone, content small smile, cozy living room with warm evening light' },
+  { caption: 'POV: about to find out what the AI thinks of you', prompt: 'young person staring intently at phone, slight nervous smile, late afternoon golden light through window, candid' },
+  { caption: 'POV: trapped on an app that only generates content about me', prompt: 'young person on bed surrounded by pillows, phone held close to face, slight dazed amused expression, warm bedroom lighting' },
+  { caption: 'POV: 5 minutes into mainfeed and already addicted', prompt: 'young person glued to phone in dim room, slight grin, phone glow on face, late evening light, cinematic candid' },
+  { caption: 'me showing up to my new ai-generated era:', prompt: 'young person walking through a sunlit doorway with confident smirk, golden hour backlight, cinematic film still' },
+  { caption: 'when you realize the app will keep making content about you forever', prompt: 'young person staring at phone with wide eyes slight smile, soft indoor lighting, candid film still' },
+  { caption: 'POV: about to become the main character of your own feed', prompt: 'young person standing in quiet living room holding phone, slight knowing smile, soft morning light, cinematic' },
+  { caption: 'POV: just made a mainfeed and feeling like a small celebrity', prompt: 'young person leaning back on couch with smug satisfied expression, cozy room warm lighting, slight smirk' },
+  { caption: 'me telling myself "i\'ll only check it once" today:', prompt: 'young person on phone in bed with dim ambient room, phone glow on face, conflicted slight smile, candid' },
+  { caption: 'when the AI starts generating content of you and you\'re not ready', prompt: 'young person looking at phone with hand half-covering mouth in surprise, soft bedroom lighting, candid' },
+  { caption: 'POV: signed up to a feed that\'s gonna roast me daily', prompt: 'young person on couch with phone, slight nervous laugh, warm indoor light, candid film still' },
+  { caption: 'POV: the mainfeed era has begun', prompt: 'young person looking out window holding phone, dramatic side light, slight introspective expression' },
+  { caption: 'me already planning what to share from this app:', prompt: 'young person on couch scrolling phone with thoughtful slight smile, cozy evening lighting' },
+  { caption: 'POV: finally an algorithm that\'s all about ME', prompt: 'young person mid-laugh holding phone close to face, soft natural light, candid joyful moment' },
+  { caption: 'when you join an app and immediately know it was a mistake (good kind):', prompt: 'young person sitting on bed mid-laugh holding phone, surprised amused expression, warm bedroom light' },
+  { caption: 'POV: i am the protagonist now', prompt: 'young person walking through golden-hour street holding phone, confident slight smile, blurred background, cinematic' },
+  { caption: 'me explaining mainfeed to my friend group chat:', prompt: 'young person mid-text on phone with focused slight smile, cozy room lighting, candid' },
+  { caption: 'POV: the AI made one piece and i\'m already attached', prompt: 'young person on couch holding phone with attached fond expression, soft evening light' },
+  { caption: 'when your face becomes the algorithm\'s whole personality:', prompt: 'young person looking at phone with slight amused disbelief, soft bedroom light, candid' },
+  { caption: 'POV: feeding the AI just enough info to be dangerous', prompt: 'young person leaning over phone with mischievous smile, dim ambient lighting, dramatic film still' },
+  { caption: 'me waiting for my AI to drop content about me like:', prompt: 'young person cross-legged on bed staring at phone with anticipation, warm bedroom light, candid' },
+  { caption: 'POV: the only social media where everyone is muted except me', prompt: 'young person in cozy chair with phone, content peaceful expression, soft natural light, cinematic' },
+  { caption: 'signing up for mainfeed energy:', prompt: 'young person mid-stride entering room holding phone, slight confident smile, golden light through window' },
 ];
 
 function pickWelcomeScenario() {
@@ -956,11 +1016,21 @@ export default {
     // Feed
     if (method === 'GET' && path === '/api/feed') return handleFeed(request, env, origin);
 
-    // Piece (file stream, delete)
+    // Piece (file stream, delete, publish toggle)
     const pieceFileMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)\/file$/);
     if (method === 'GET' && pieceFileMatch) return handlePieceFile(request, env, origin, pieceFileMatch[1]);
+    const piecePublicFileMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)\/public-file$/);
+    if (method === 'GET' && piecePublicFileMatch) return handlePublicPieceFile(request, env, origin, piecePublicFileMatch[1]);
+    const piecePublishMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)\/publish$/);
+    if (method === 'POST' && piecePublishMatch) return handlePiecePublish(request, env, origin, piecePublishMatch[1], true);
+    const pieceUnpublishMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)\/unpublish$/);
+    if (method === 'POST' && pieceUnpublishMatch) return handlePiecePublish(request, env, origin, pieceUnpublishMatch[1], false);
     const pieceDeleteMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)$/);
     if (method === 'DELETE' && pieceDeleteMatch) return handlePieceDelete(request, env, origin, pieceDeleteMatch[1]);
+
+    // Public profile
+    const profileMatch = path.match(/^\/api\/profile\/([a-z0-9]+)$/);
+    if (method === 'GET' && profileMatch) return handlePublicProfile(request, env, origin, profileMatch[1]);
 
     // Diary
     if (method === 'POST' && path === '/api/diary/create') return handleDiaryCreate(request, env, origin);

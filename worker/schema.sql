@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS generated_pieces (
   deleted_at INTEGER,
   download_count INTEGER NOT NULL DEFAULT 0,
   share_count INTEGER NOT NULL DEFAULT 0,
+  public INTEGER NOT NULL DEFAULT 0,   -- 1 = visible at /@handle public profile
   FOREIGN KEY (user_id) REFERENCES users(id),
   FOREIGN KEY (diary_entry_id) REFERENCES diary_entries(id)
 );

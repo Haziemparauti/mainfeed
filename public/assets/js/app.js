@@ -50,10 +50,38 @@ let currentUser = null;
 
 function paintMe(user) {
   const initial = $('#mf-avatar-initial');
-  if (initial && user?.handle) {
-    initial.textContent = user.handle.charAt(0).toUpperCase();
-  }
+  if (initial && user?.handle) initial.textContent = user.handle.charAt(0).toUpperCase();
+  const menuInitial = $('#mf-app-menu-initial');
+  if (menuInitial && user?.handle) menuInitial.textContent = user.handle.charAt(0).toUpperCase();
+  const menuHandle = $('#mf-app-menu-handle');
+  if (menuHandle && user?.handle) menuHandle.textContent = '@' + user.handle;
+  const menuEmail = $('#mf-app-menu-email');
+  if (menuEmail && user?.email) menuEmail.textContent = user.email;
+  const publicLink = $('#mf-menu-public-profile');
+  if (publicLink && user?.handle) publicLink.href = '/@' + user.handle;
 }
+
+// ============ App menu drawer (logout etc.) ============
+
+const appMenuToggle = $('#mf-app-menu-toggle');
+const appMenu = $('#mf-app-menu');
+const appMenuClose = $('#mf-app-menu-close');
+appMenuToggle?.addEventListener('click', () => { if (appMenu) appMenu.hidden = false; });
+appMenuClose?.addEventListener('click', () => { if (appMenu) appMenu.hidden = true; });
+appMenu?.addEventListener('click', (e) => {
+  if (e.target === appMenu) appMenu.hidden = true;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && appMenu && !appMenu.hidden) appMenu.hidden = true;
+});
+
+$('#mf-menu-logout')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  try {
+    await fetch(`${API}/api/logout`, { method: 'POST', credentials: 'include' });
+  } catch {}
+  window.location.href = '/';
+});
 
 // ============ Feed ============
 
@@ -95,8 +123,10 @@ function pieceCard(p) {
   const mediaTag = p.type === 'video'
     ? `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline></video>`
     : `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`;
+  const pubText = p.public ? 'Unpublish' : 'Publish';
+  const pubClass = p.public ? 'mf-piece-action mf-piece-action--active' : 'mf-piece-action';
   return `
-    <article class="mf-piece" data-id="${p.id}" data-caption="${escapeHtml(p.caption || '')}" data-url="${API}${p.file_url}">
+    <article class="mf-piece" data-id="${p.id}" data-caption="${escapeHtml(p.caption || '')}" data-url="${API}${p.file_url}" data-public="${p.public ? '1' : '0'}">
       <div class="mf-piece-stage">
         ${mediaTag}
         ${top ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(top)}</div>` : ''}
@@ -106,6 +136,7 @@ function pieceCard(p) {
       <div class="mf-piece-actions">
         <button class="mf-piece-action" data-piece-action="download" data-id="${p.id}">Download</button>
         <button class="mf-piece-action" data-piece-action="share" data-id="${p.id}">Share</button>
+        <button class="${pubClass}" data-piece-action="publish-toggle" data-id="${p.id}">${pubText}</button>
       </div>
     </article>
   `;
@@ -121,7 +152,57 @@ document.addEventListener('click', async (e) => {
   const card = btn.closest('.mf-piece');
   if (action === 'download') return downloadPiece(id, card, btn);
   if (action === 'share') return sharePiece(id, card, btn);
+  if (action === 'publish-toggle') return togglePublish(id, card, btn);
 });
+
+async function togglePublish(id, card, btn) {
+  const isPublic = card.dataset.public === '1';
+  setBusy(btn, isPublic ? 'Unpublishing…' : 'Publishing…');
+  try {
+    const res = await fetch(`${API}/api/piece/${id}/${isPublic ? 'unpublish' : 'publish'}`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert('Failed: ' + (data.error || 'unknown'));
+      return;
+    }
+    const nowPublic = !isPublic;
+    card.dataset.public = nowPublic ? '1' : '0';
+    btn.textContent = nowPublic ? 'Unpublish' : 'Publish';
+    btn.classList.toggle('mf-piece-action--active', nowPublic);
+    if (nowPublic) {
+      // Quick toast — they can find it at /@handle
+      showToast(`Live at mainfeed.app/@${currentUser?.handle || ''}`);
+    }
+  } finally {
+    setBusy(btn, null);
+  }
+}
+
+function showToast(msg) {
+  let toast = document.getElementById('mf-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'mf-toast';
+    toast.style.cssText = `
+      position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
+      background: var(--surface); border: 1px solid var(--border); color: var(--text);
+      padding: 12px 18px; border-radius: 999px; font-size: 14px; font-weight: 600;
+      z-index: 200; box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+      animation: mf-toast-in 0.2s ease;
+    `;
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  clearTimeout(window.__mfToastTimer);
+  window.__mfToastTimer = setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s ease';
+  }, 2500);
+}
 
 async function downloadPiece(id, card, btn) {
   setBusy(btn, 'Baking…');
