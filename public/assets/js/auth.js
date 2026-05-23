@@ -24,6 +24,7 @@ const ERROR_MESSAGES = {
   not_authenticated: 'Please log in first.',
   empty_entry: 'Tell us something first.',
   too_long: 'Keep it under 500 characters.',
+  user_cap_reached: 'Mainfeed is in private testing right now — signups are temporarily closed. Check back soon.',
 };
 
 function showError(code) {

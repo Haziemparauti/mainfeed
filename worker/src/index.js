@@ -16,6 +16,9 @@ const RESERVED_HANDLES = new Set([
   'assets', 'static', 'www', 'public', 'private', 'system',
 ]);
 
+// Testing-phase signup cap. Bump up when monetization is wired + abuse signals are in place.
+const MAX_USERS = 5;
+
 // ============ Utilities ============
 
 function cors(origin) {
@@ -204,6 +207,14 @@ async function handleSignup(request, env, origin) {
   // Rate limit by IP
   const rl = await rateLimit(env, `signup:${clientIp(request)}`, 5, 600);
   if (!rl.allowed) return errResp('rate_limited', 429, origin);
+
+  // Total-user cap during testing phase
+  const capRow = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL'
+  ).first();
+  if ((capRow?.count || 0) >= MAX_USERS) {
+    return errResp('user_cap_reached', 403, origin, { cap: MAX_USERS });
+  }
 
   const ct = request.headers.get('Content-Type') || '';
   if (!ct.startsWith('multipart/form-data')) {
