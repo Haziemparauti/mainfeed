@@ -516,10 +516,10 @@ async function generateImageFalPulid(env, prompt, referenceImageDataUrl) {
     guidance_scale: 4,
     true_cfg: 1.0,
     id_weight: 1.0,
-    num_images: 1,
     enable_safety_checker: true,
+    sync_mode: true, // block until image is ready; no polling needed
   };
-  const res = await fetch('https://fal.run/fal-ai/flux-pulid', {
+  const res = await fetch('https://queue.fal.run/fal-ai/flux-pulid', {
     method: 'POST',
     headers: {
       'Authorization': `Key ${env.FAL_API_KEY}`,
@@ -529,17 +529,20 @@ async function generateImageFalPulid(env, prompt, referenceImageDataUrl) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    console.error('fal.ai PuLID error', res.status, text.slice(0, 300));
+    console.error('fal.ai PuLID error', res.status, text.slice(0, 500));
     return null;
   }
   const data = await res.json().catch(() => null);
   const imageUrl = data?.images?.[0]?.url;
   if (!imageUrl) {
-    console.error('fal.ai PuLID returned no image url', JSON.stringify(data).slice(0, 200));
+    console.error('fal.ai PuLID returned no image url', JSON.stringify(data).slice(0, 400));
     return null;
   }
   const imgRes = await fetch(imageUrl);
-  if (!imgRes.ok) return null;
+  if (!imgRes.ok) {
+    console.error('fal.ai image fetch failed', imgRes.status);
+    return null;
+  }
   return new Uint8Array(await imgRes.arrayBuffer());
 }
 
