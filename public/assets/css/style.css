@@ -744,10 +744,12 @@ img, svg { display: block; max-width: 100%; }
   color: var(--text-dim);
 }
 
+/* Feed is full-bleed — break out of the container's 20px horizontal padding */
 .mf-feed {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
+  margin: 0 -20px;
 }
 
 .mf-feed-empty {
@@ -768,45 +770,89 @@ img, svg { display: block; max-width: 100%; }
 }
 
 .mf-piece {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: var(--bg);
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
   overflow: hidden;
+}
+
+.mf-piece-stage {
+  position: relative;
+  width: 100%;
+  background: var(--surface-2);
 }
 
 .mf-piece-media {
   width: 100%;
-  aspect-ratio: 1;
-  background: var(--surface-2);
+  height: auto;
   display: block;
 }
 
-.mf-piece-body {
-  padding: 14px 16px;
+/* Meme caption overlays — Impact-style, thick stroke, big and centered */
+.mf-piece-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 0 6%;
+  text-align: center;
+  font-family: Impact, "Anton", "Arial Black", system-ui, sans-serif;
+  font-weight: 900;
+  font-size: clamp(22px, 6vw, 38px);
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  color: #fff;
+  text-transform: uppercase;
+  -webkit-text-stroke: 2px #000;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  user-select: none;
 }
 
-.mf-piece-caption {
-  font-size: 15px;
-  line-height: 1.4;
-  margin-bottom: 12px;
+.mf-piece-overlay--top {
+  top: 4%;
+}
+
+.mf-piece-overlay--bottom {
+  bottom: 4%;
+}
+
+.mf-piece-watermark {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.32);
+  padding: 3px 8px;
+  border-radius: 999px;
+  pointer-events: none;
+  user-select: none;
+  letter-spacing: 0.02em;
 }
 
 .mf-piece-actions {
   display: flex;
-  gap: 8px;
+  gap: 0;
+  padding: 10px 16px 14px;
 }
 
 .mf-piece-action {
   flex: 1;
-  background: var(--surface-2);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 10px 0;
-  font-size: 13px;
+  padding: 12px 0;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  margin: 0 4px;
 }
 
+.mf-piece-action:first-child { margin-left: 0; }
+.mf-piece-action:last-child  { margin-right: 0; }
+
 .mf-piece-action:active {
-  background: var(--border);
+  background: var(--surface);
 }

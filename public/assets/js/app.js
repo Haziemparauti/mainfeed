@@ -1,4 +1,4 @@
-// Mainfeed — main app (feed + diary + download)
+// Mainfeed — main app (feed + diary + download/share with caption baked on)
 
 const API = window.location.hostname === 'localhost'
   ? 'http://localhost:8787'
@@ -27,8 +27,8 @@ function escapeHtml(s) {
   }[c]));
 }
 
-// ============ Boot ============
-
+// Boot
+let currentUser = null;
 (async function boot() {
   try {
     const meRes = await fetch(`${API}/api/me`, { credentials: 'include' });
@@ -37,7 +37,8 @@ function escapeHtml(s) {
       return;
     }
     const me = await meRes.json();
-    paintMe(me.user);
+    currentUser = me.user;
+    paintMe(currentUser);
     await loadFeed();
   } catch (err) {
     console.error('boot error', err);
@@ -77,20 +78,32 @@ function renderFeed(pieces) {
   feed.innerHTML = pieces.map(pieceCard).join('');
 }
 
+// Split a caption on ' / ' into [top, bottom]. If no delimiter, all goes to bottom.
+function splitCaption(caption) {
+  const c = String(caption || '');
+  const idx = c.indexOf(' / ');
+  if (idx >= 0) {
+    return { top: c.slice(0, idx).trim(), bottom: c.slice(idx + 3).trim() };
+  }
+  return { top: '', bottom: c.trim() };
+}
+
 function pieceCard(p) {
-  const media = p.type === 'video'
+  const { top, bottom } = splitCaption(p.caption);
+  const mediaTag = p.type === 'video'
     ? `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline></video>`
-    : `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" />`;
+    : `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`;
   return `
-    <article class="mf-piece" data-id="${p.id}">
-      ${media}
-      <div class="mf-piece-body">
-        <p class="mf-piece-caption">${escapeHtml(p.caption || '')}</p>
-        <div class="mf-piece-actions">
-          <button class="mf-piece-action" data-piece-action="download" data-id="${p.id}">Download</button>
-          <button class="mf-piece-action" data-piece-action="share" data-id="${p.id}">Share</button>
-          <button class="mf-piece-action" data-piece-action="delete" data-id="${p.id}">Delete</button>
-        </div>
+    <article class="mf-piece" data-id="${p.id}" data-caption="${escapeHtml(p.caption || '')}" data-url="${API}${p.file_url}">
+      <div class="mf-piece-stage">
+        ${mediaTag}
+        ${top ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(top)}</div>` : ''}
+        ${bottom ? `<div class="mf-piece-overlay mf-piece-overlay--bottom">${escapeHtml(bottom)}</div>` : ''}
+        <div class="mf-piece-watermark">Mainfeed.app · @${escapeHtml(currentUser?.handle || '')}</div>
+      </div>
+      <div class="mf-piece-actions">
+        <button class="mf-piece-action" data-piece-action="download" data-id="${p.id}">Download</button>
+        <button class="mf-piece-action" data-piece-action="share" data-id="${p.id}">Share</button>
       </div>
     </article>
   `;
@@ -103,60 +116,162 @@ document.addEventListener('click', async (e) => {
   if (!btn) return;
   const action = btn.dataset.pieceAction;
   const id = btn.dataset.id;
-  if (action === 'download') return downloadPiece(id);
-  if (action === 'share') return sharePiece(id);
-  if (action === 'delete') return deletePiece(id, btn);
+  const card = btn.closest('.mf-piece');
+  if (action === 'download') return downloadPiece(id, card, btn);
+  if (action === 'share') return sharePiece(id, card, btn);
 });
 
-function downloadPiece(id) {
-  // Triggers an authenticated download (cookie is sent automatically on same eTLD+1)
-  const a = document.createElement('a');
-  a.href = `${API}/api/piece/${id}/file?download=1`;
-  a.download = `mainfeed-${id}.jpg`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+async function downloadPiece(id, card, btn) {
+  setBusy(btn, 'Baking…');
+  try {
+    const blob = await renderPieceWithCaption(card);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mainfeed-${id}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (err) {
+    console.error('download failed', err);
+    alert('Download failed. Try again.');
+  } finally {
+    setBusy(btn, null);
+  }
 }
 
-async function sharePiece(id) {
-  const url = `${API}/api/piece/${id}/file`;
-  if (navigator.share) {
-    try {
-      // Best path: fetch the file and share as a File so it goes into IG/TikTok/WhatsApp natively
-      const res = await fetch(url, { credentials: 'include' });
-      if (!res.ok) throw new Error('fetch failed');
-      const blob = await res.blob();
-      const file = new File([blob], `mainfeed-${id}.jpg`, { type: blob.type });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], text: 'Made on Mainfeed.app' });
-        return;
-      }
-      // Fallback: share the URL only (less useful since the URL is private)
-      await navigator.share({ title: 'Mainfeed', text: 'Made on Mainfeed.app', url });
-    } catch (err) {
-      if (err && err.name !== 'AbortError') alert('Share failed. Use Download instead.');
+async function sharePiece(id, card, btn) {
+  setBusy(btn, 'Preparing…');
+  try {
+    const blob = await renderPieceWithCaption(card);
+    const file = new File([blob], `mainfeed-${id}.jpg`, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], text: 'Made on Mainfeed.app' });
+    } else if (navigator.share) {
+      await navigator.share({ title: 'Mainfeed', text: 'Made on Mainfeed.app' });
+    } else {
+      alert('Share not supported on this browser. Use Download instead.');
     }
-  } else {
-    alert('Share not supported on this browser. Use Download instead.');
+  } catch (err) {
+    if (err && err.name !== 'AbortError') {
+      console.error('share failed', err);
+      alert('Share failed. Try Download instead.');
+    }
+  } finally {
+    setBusy(btn, null);
   }
 }
 
-async function deletePiece(id, btn) {
-  if (!confirm('Delete this piece? This cannot be undone.')) return;
-  btn.disabled = true;
-  const res = await fetch(`${API}/api/piece/${id}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-  if (!res.ok) {
+function setBusy(btn, label) {
+  if (!btn) return;
+  if (label) {
+    if (!btn.dataset.origLabel) btn.dataset.origLabel = btn.textContent;
+    btn.textContent = label;
+    btn.disabled = true;
+  } else {
+    btn.textContent = btn.dataset.origLabel || btn.textContent;
     btn.disabled = false;
-    const data = await res.json().catch(() => ({}));
-    return showError(data.error);
   }
-  const card = btn.closest('.mf-piece');
-  card?.remove();
-  // If feed is now empty, re-render empty state
-  if (!$('.mf-piece')) renderFeed([]);
+}
+
+// ============ Caption baking on a canvas (download + share) ============
+
+async function loadImageBlob(url) {
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) throw new Error('image fetch failed');
+  return await res.blob();
+}
+
+async function renderPieceWithCaption(card) {
+  const url = card.dataset.url;
+  const caption = card.dataset.caption || '';
+  const { top, bottom } = splitCaption(caption);
+  const blob = await loadImageBlob(url);
+  const imgBitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = imgBitmap.width;
+  canvas.height = imgBitmap.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(imgBitmap, 0, 0);
+
+  drawMemeCaption(ctx, canvas.width, canvas.height, top, bottom);
+  drawWatermark(ctx, canvas.width, canvas.height, `Mainfeed.app · @${currentUser?.handle || ''}`);
+
+  return await new Promise((resolve) =>
+    canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92)
+  );
+}
+
+function drawMemeCaption(ctx, w, h, top, bottom) {
+  const fontSize = Math.round(h * 0.06);
+  const padding = Math.round(w * 0.05);
+  const maxWidth = w - padding * 2;
+  ctx.font = `bold ${fontSize}px Impact, "Anton", "Arial Black", sans-serif`;
+  ctx.fillStyle = 'white';
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = Math.max(2, fontSize * 0.08);
+  ctx.lineJoin = 'round';
+  ctx.textAlign = 'center';
+
+  if (top) {
+    ctx.textBaseline = 'top';
+    drawWrappedText(ctx, top.toUpperCase(), w / 2, padding, maxWidth, fontSize * 1.1);
+  }
+  if (bottom) {
+    ctx.textBaseline = 'bottom';
+    drawWrappedTextFromBottom(ctx, bottom.toUpperCase(), w / 2, h - padding, maxWidth, fontSize * 1.1);
+  }
+}
+
+function drawWrappedText(ctx, text, x, startY, maxWidth, lineHeight) {
+  const lines = wrapLines(ctx, text, maxWidth);
+  lines.forEach((line, i) => {
+    const y = startY + i * lineHeight;
+    ctx.strokeText(line, x, y);
+    ctx.fillText(line, x, y);
+  });
+}
+
+function drawWrappedTextFromBottom(ctx, text, x, endY, maxWidth, lineHeight) {
+  const lines = wrapLines(ctx, text, maxWidth);
+  lines.forEach((line, i) => {
+    const y = endY - (lines.length - 1 - i) * lineHeight;
+    ctx.strokeText(line, x, y);
+    ctx.fillText(line, x, y);
+  });
+}
+
+function wrapLines(ctx, text, maxWidth) {
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let current = '';
+  for (const w of words) {
+    const test = current ? current + ' ' + w : w;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = w;
+    } else {
+      current = test;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function drawWatermark(ctx, w, h, text) {
+  const fontSize = Math.max(11, Math.round(h * 0.018));
+  ctx.font = `600 ${fontSize}px -apple-system, "SF Pro Text", system-ui, sans-serif`;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  const padX = Math.max(10, Math.round(w * 0.015));
+  const padY = Math.max(10, Math.round(h * 0.015));
+  ctx.strokeText(text, w - padX, h - padY);
+  ctx.fillText(text, w - padX, h - padY);
 }
 
 // ============ Diary ============
@@ -197,15 +312,14 @@ $('#mf-diary-submit')?.addEventListener('click', async () => {
   }
 });
 
-// ============ Logout (via menu link wiring later) ============
+// ============ Logout (call from console for now, menu wiring later) ============
 
 window.mfLogout = async function () {
   await fetch(`${API}/api/logout`, { method: 'POST', credentials: 'include' });
   window.location.href = '/';
 };
 
-// ============ Service worker ============
-
+// Service worker
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }

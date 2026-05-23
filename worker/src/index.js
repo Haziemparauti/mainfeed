@@ -281,6 +281,9 @@ async function handleSignup(request, env, origin) {
 
   const session = await createSession(env, userId);
 
+  // Fire-and-forget welcome piece (don't block signup response on it — but await briefly so it lands soon)
+  await generateWelcomePiece(env, userId, handle, now() + 1);
+
   return json(
     { ok: true, user: { id: userId, handle, email } },
     { headers: { 'Set-Cookie': sessionCookie(session.token, session.expires) } },
@@ -423,41 +426,80 @@ async function handlePieceDelete(request, env, origin, pieceId) {
 
 // ============ Generation pipeline (Workers AI: Llama 3.1 + Flux Schnell) ============
 
-// Caption-writing few-shot prompt — tuned for Gen-Z meme tone
-const CAPTION_SYSTEM_PROMPT = `You write short, punchy meme captions for a personal AI feed. The user's name is {handle}. The user just wrote a diary entry about their day. Write ONE caption in the style of viral Gen-Z TikTok/Instagram meme captions about THEMSELVES, in 3rd person ("@{handle} ..." or "POV: @{handle} ...").
+// Caption-writing few-shot prompt — irony/contrast meme voice (Gen-Z TikTok/X)
+const CAPTION_SYSTEM_PROMPT = `You write meme captions for a personal AI feed. The user's handle is @{handle}. They just shared something about their day. Write ONE caption in the VIRAL IRONY/CONTRAST style — the caption sets up an expectation and the IMAGE will show the opposite/truth.
+
+Caption FORMATS (pick whichever fits, sometimes mix):
+- "POV: [setup that ignores reality]"
+- "[Quote pretending to be authority]" / "Me [doing the opposite]:"
+- "How I think I [verb] / How I actually [verb]"
+- "Me [action] knowing [contradicting fact]"
+- "[Friends/society/expectation] / Me:"
+- "When [common situation]"
 
 Rules:
-- 4-15 words MAX
-- Self-aware, witty, slightly chaotic
-- No emojis, no hashtags, no quotes
-- Funny > clever > profound
-- Reference the diary content specifically
-- Sound like a real human meme, not corporate copy
+- 4-25 words total, 1 or 2 short lines max
+- Use " / " to split into top/bottom when there are two parts (setup vs reality)
+- No emojis, no hashtags, no surrounding quotes
+- Self-aware, ironic, slightly chaotic, sound like a 22-year-old shitposter
+- Reference the user's content specifically — name dropping @{handle} is OPTIONAL not required
+- ALL LOWERCASE preferred for casual energy, but proper nouns + POV/Me can stay capitalized
 
-Examples:
-diary: "just woke up at 4pm" -> "@sara waking up at 16:00 acting like she didn't have plans"
-diary: "investing in crypto" -> "POV: @sara about to lose everything on a coin she found on twitter"
-diary: "hate my colleague" -> "@sara plotting revenge against Kevin from accounting all afternoon"
-diary: "broke and tired" -> "@sara checking her bank app for the 47th time today"
-diary: "fell in love" -> "@sara writing his name in her notes app like a 13 year old"
-diary: "ate too much" -> "@sara entering food coma like a pregnant cat in summer"
+Examples (study the pattern):
+diary: "just woke up at 4pm" -> POV: you woke up at 4pm and act like its normal
+diary: "had school today and it was bad" -> POV: just finished school today acting happy all day
+diary: "trying to sleep but i'm wired" -> "Science says the best time to sleep is during night" / Me at 3am:
+diary: "my friend asked if im okay" -> My friends asking if I'm okay / Me lying to them in 4K:
+diary: "going to bed early" -> "You're going to bed early tonight" / Me at 3am:
+diary: "monday energy is rough" -> POV: it's Monday and you're already done
+diary: "gym day" -> How I think I look at the gym / how I actually look
+diary: "i overate" -> Me promising myself i'd eat healthy / Me 30 minutes later:
+diary: "another zoom call" -> Hour 3 of a 30 min meeting and im not gonna make it
+diary: "checking my bank account" -> Me checking my bank app for the 47th time today
+diary: "missed the meeting" -> Me realising the meeting started 10 minutes ago
+diary: "the wifi just died" -> Wifi disconnecting 1 minute before save
+diary: "rejected by crush" -> Me convincing myself they're missing out (they're not)
+diary: "i did one productive thing" -> Me after replying to ONE email expecting a parade
+diary: "exam tomorrow" -> Tomorrow's exam at 8am / Me starting to study at 11pm
+diary: "fast food again" -> Me promising "this is the last time" for the 5th week in a row
+diary: "got dressed up for nothing" -> POV: dressing up for an event no one invited you to
+diary: "i miss home" -> Me being totally fine on my own / Me at 9pm calling mom:
+diary: "i ate the chocolate again" -> The chocolate i hid from myself: / Me 30 minutes later:
+diary: "lost at the game" -> POV: you got dragged in your own ranked game by a 12yo
+diary: "spilled coffee on my shirt" -> Me trying to start the day strong / The coffee 30 seconds later:
+diary: "boss said we need to talk" -> Receiving "we need to talk" at 11pm / Me trying to act normal:
+diary: "told everyone im starting the gym" -> Me telling everyone I'm starting the gym tomorrow / Tomorrow's me:
+diary: "made it through monday" -> POV: surviving Monday and immediately needing to recover
+diary: "tried to study" -> Me opening the textbook with full focus / Me 8 minutes later on TikTok:
 
-Output ONLY the caption text. No quotes, no explanation, no prefix.`;
+Output ONLY the caption text. No quotes around it, no explanation, no prefix.`;
 
-// Image-prompt rewriter — turns the meme caption into a Flux-friendly visual prompt
-const IMAGE_PROMPT_SYSTEM = `You turn a meme caption into a short visual prompt for an AI image generator (Flux Schnell). Output ONLY the visual description, no quotes, no explanation.
+// Image-prompt rewriter — extract the IRONIC visual (the "truth" half of the meme)
+const IMAGE_PROMPT_SYSTEM = `You turn a meme caption into a visual prompt for an AI image generator (Flux). The caption uses the IRONY/CONTRAST pattern — your job is to extract the TRUE/IRONIC visual (the reality being shown), NOT the setup.
 
 Rules:
 - 10-30 words
-- Describe the SCENE/MOOD that matches the caption
-- One person doing the action, vivid setting, cinematic lighting
-- No text in image, no letters, no logos, no real celebrities
-- Slightly cinematic / dramatic / film-still style
-- Examples:
-  caption: "waking up at 16:00 acting like she didn't have plans" -> "person sprawled in messy bed at sunset, alarm clock showing 4pm, harsh afternoon light through closed blinds, exhausted expression, cinematic"
-  caption: "about to lose everything on a coin she found on twitter" -> "young adult staring at glowing phone screen in dark room, sweaty forehead, panicked eyes, neon green and red chart reflections on face, dramatic"
-  caption: "writing his name in her notes app like a 13 year old" -> "girl on bed kicking feet, phone screen filling frame, soft pink bedroom light, dreamy expression, golden hour"
-`;
+- Describe the SCENE matching the IRONY/CONTRADICTION
+- One person doing the action, vivid setting, cinematic lighting, film-still aesthetic
+- No text/letters/logos in the image, no real celebrities or named people
+- Use "young person" or "young adult" — don't specify gender unless the caption requires it
+
+Examples (study which part of the caption becomes the visual):
+caption: "POV: you woke up at 4pm and act like its normal" -> young person sprawled in messy bed, golden sunset light through closed blinds, exhausted dazed expression, clock visible reading late afternoon, cinematic
+caption: "Science says the best time to sleep is during night / Me at 3am:" -> young person sleeping diagonally on bed, harsh midday sun blasting through window, twisted blanket, dead asleep mouth open, cinematic
+caption: "POV: just finished school today acting happy all day" -> young person in parked car gripping steering wheel, face contorted mid-yell, parking lot setting, dramatic afternoon light through windshield
+caption: "Me checking my bank app for the 47th time today" -> young person on couch holding phone close, illuminated by screen glow in dim room, defeated worried expression, soft evening light
+caption: "How I think I look at the gym / how I actually look" -> young person at gym mid-exercise, sweaty disheveled hair, slightly off-balance, fluorescent gym lighting, candid not posed
+caption: "Hour 3 of a 30 min meeting and im not gonna make it" -> young person at desk in front of laptop, head propped on hand, eyes glazed over, late afternoon sunlight, zoom call visible on screen
+caption: "Wifi disconnecting 1 minute before save" -> young person at desk staring at monitor in horror, hands frozen over keyboard, dark room lit only by screen, expression of pure betrayal
+caption: "POV: dressing up for an event no one invited you to" -> young person in formal outfit standing alone in living room, phone in hand checking, soft golden hour light, slight melancholy
+caption: "POV: surviving Monday and immediately needing to recover" -> young person collapsed face-down on couch in work clothes, one shoe still on, evening light, completely done
+
+Output ONLY the visual description. No quotes, no preamble.`;
+
+// Hardcoded welcome piece — first content a new user sees after signup
+const WELCOME_CAPTION = 'POV: you already regret signing up for your own main character feed';
+const WELCOME_IMAGE_PROMPT = 'young person in dim bedroom holding phone, illuminated by the phone screen glow, slightly worried slightly intrigued expression, soft evening light, cinematic candid';
 
 async function generateCaption(env, handle, diaryContent) {
   const system = CAPTION_SYSTEM_PROMPT.replace(/\{handle\}/g, handle);
@@ -608,16 +650,10 @@ async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent,
 }
 
 async function generatePiecesForDiary(env, userId, handle, diaryEntryId, diaryContent, ts) {
-  // Load reference selfie once and reuse for all 3 parallel pieces
+  // ONE piece per diary entry (reduced from 3 — cost + the smart-mix happens via the cron, not per-event)
   const selfieDataUrl = await getUserSelfieDataUrl(env, userId);
-
-  const NUM_PIECES = 3;
-  const tasks = [];
-  for (let i = 0; i < NUM_PIECES; i++) {
-    tasks.push(generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts + i, selfieDataUrl));
-  }
-  const results = await Promise.all(tasks);
-  const created = results.filter(Boolean);
+  const pieceId = await generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts, selfieDataUrl);
+  const created = pieceId ? [pieceId] : [];
 
   if (created.length > 0) {
     await env.DB.prepare(
@@ -626,6 +662,33 @@ async function generatePiecesForDiary(env, userId, handle, diaryEntryId, diaryCo
   }
 
   return created;
+}
+
+// Welcome piece — generated once at signup, hardcoded caption + prompt (no LLM calls = faster + consistent)
+async function generateWelcomePiece(env, userId, handle, ts) {
+  try {
+    const selfieDataUrl = await getUserSelfieDataUrl(env, userId);
+    const result = await generateImage(env, WELCOME_IMAGE_PROMPT, selfieDataUrl);
+    if (!result) return null;
+
+    const pieceId = uid();
+    const r2Key = `pieces/${userId}/${pieceId}.jpg`;
+    await env.CONTENT.put(r2Key, result.bytes, {
+      httpMetadata: { contentType: 'image/jpeg' },
+    });
+
+    await env.DB.prepare(
+      `INSERT INTO generated_pieces
+         (id, user_id, diary_entry_id, type, caption, r2_key, mime_type,
+          generation_provider, generation_prompt, created_at, download_count, share_count)
+       VALUES (?, ?, NULL, 'image', ?, ?, 'image/jpeg', ?, ?, ?, 0, 0)`
+    ).bind(pieceId, userId, WELCOME_CAPTION, r2Key, result.provider, WELCOME_IMAGE_PROMPT, ts).run();
+
+    return pieceId;
+  } catch (err) {
+    console.error('welcome piece generation failed', err);
+    return null;
+  }
 }
 
 // ============ Diary ============
