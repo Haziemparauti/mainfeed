@@ -175,7 +175,7 @@ $('#mf-diary-submit')?.addEventListener('click', async () => {
   const btn = $('#mf-diary-submit');
   btn.disabled = true;
   const orig = btn.textContent;
-  btn.textContent = 'Working…';
+  btn.textContent = 'Making content…';
   try {
     const res = await fetch(`${API}/api/diary/create`, {
       method: 'POST',
@@ -187,7 +187,9 @@ $('#mf-diary-submit')?.addEventListener('click', async () => {
     if (!res.ok) return showError(data.error);
     diaryInput.value = '';
     diaryLen.textContent = '0';
-    alert(data.message || 'Diary saved.');
+    if (data.pieces_generated === 0) {
+      alert('Hmm, generation hiccupped. Try again in a sec.');
+    }
     await loadFeed();
   } finally {
     btn.disabled = false;

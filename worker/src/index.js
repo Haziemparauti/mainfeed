@@ -410,6 +410,135 @@ async function handlePieceDelete(request, env, origin, pieceId) {
   return json({ ok: true }, {}, origin);
 }
 
+// ============ Generation pipeline (Workers AI: Llama 3.1 + Flux Schnell) ============
+
+// Caption-writing few-shot prompt — tuned for Gen-Z meme tone
+const CAPTION_SYSTEM_PROMPT = `You write short, punchy meme captions for a personal AI feed. The user's name is {handle}. The user just wrote a diary entry about their day. Write ONE caption in the style of viral Gen-Z TikTok/Instagram meme captions about THEMSELVES, in 3rd person ("@{handle} ..." or "POV: @{handle} ...").
+
+Rules:
+- 4-15 words MAX
+- Self-aware, witty, slightly chaotic
+- No emojis, no hashtags, no quotes
+- Funny > clever > profound
+- Reference the diary content specifically
+- Sound like a real human meme, not corporate copy
+
+Examples:
+diary: "just woke up at 4pm" -> "@sara waking up at 16:00 acting like she didn't have plans"
+diary: "investing in crypto" -> "POV: @sara about to lose everything on a coin she found on twitter"
+diary: "hate my colleague" -> "@sara plotting revenge against Kevin from accounting all afternoon"
+diary: "broke and tired" -> "@sara checking her bank app for the 47th time today"
+diary: "fell in love" -> "@sara writing his name in her notes app like a 13 year old"
+diary: "ate too much" -> "@sara entering food coma like a pregnant cat in summer"
+
+Output ONLY the caption text. No quotes, no explanation, no prefix.`;
+
+// Image-prompt rewriter — turns the meme caption into a Flux-friendly visual prompt
+const IMAGE_PROMPT_SYSTEM = `You turn a meme caption into a short visual prompt for an AI image generator (Flux Schnell). Output ONLY the visual description, no quotes, no explanation.
+
+Rules:
+- 10-30 words
+- Describe the SCENE/MOOD that matches the caption
+- One person doing the action, vivid setting, cinematic lighting
+- No text in image, no letters, no logos, no real celebrities
+- Slightly cinematic / dramatic / film-still style
+- Examples:
+  caption: "waking up at 16:00 acting like she didn't have plans" -> "person sprawled in messy bed at sunset, alarm clock showing 4pm, harsh afternoon light through closed blinds, exhausted expression, cinematic"
+  caption: "about to lose everything on a coin she found on twitter" -> "young adult staring at glowing phone screen in dark room, sweaty forehead, panicked eyes, neon green and red chart reflections on face, dramatic"
+  caption: "writing his name in her notes app like a 13 year old" -> "girl on bed kicking feet, phone screen filling frame, soft pink bedroom light, dreamy expression, golden hour"
+`;
+
+async function generateCaption(env, handle, diaryContent) {
+  const system = CAPTION_SYSTEM_PROMPT.replace(/\{handle\}/g, handle);
+  const res = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: `diary: "${diaryContent.slice(0, 400)}" ->` },
+    ],
+    max_tokens: 60,
+    temperature: 0.85,
+  });
+  let caption = (res?.response || '').trim();
+  // Strip leading "->" if model echoed it, strip surrounding quotes
+  caption = caption.replace(/^["'`]+|["'`]+$/g, '').replace(/^->\s*/, '').trim();
+  // Hard cap to 200 chars
+  return caption.slice(0, 200) || `@${handle} living that mainfeed life`;
+}
+
+async function generateImagePrompt(env, caption) {
+  const res = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+    messages: [
+      { role: 'system', content: IMAGE_PROMPT_SYSTEM },
+      { role: 'user', content: `caption: "${caption}" ->` },
+    ],
+    max_tokens: 80,
+    temperature: 0.7,
+  });
+  let prompt = (res?.response || '').trim();
+  prompt = prompt.replace(/^["'`]+|["'`]+$/g, '').replace(/^->\s*/, '').trim();
+  return prompt.slice(0, 400) || 'cinematic portrait of a young person, dramatic lighting';
+}
+
+async function generateImage(env, prompt) {
+  // Flux Schnell on Workers AI returns binary image data
+  const res = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
+    prompt,
+    steps: 4, // Schnell is optimized for 4 steps
+  });
+  // The response shape: { image: 'base64string' }
+  if (res?.image) {
+    const bin = Uint8Array.from(atob(res.image), (c) => c.charCodeAt(0));
+    return bin;
+  }
+  return null;
+}
+
+async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts) {
+  try {
+    const caption = await generateCaption(env, handle, diaryContent);
+    const imagePrompt = await generateImagePrompt(env, caption);
+    const imageBytes = await generateImage(env, imagePrompt);
+    if (!imageBytes) return null;
+
+    const pieceId = uid();
+    const r2Key = `pieces/${userId}/${pieceId}.jpg`;
+    await env.CONTENT.put(r2Key, imageBytes, {
+      httpMetadata: { contentType: 'image/jpeg' },
+    });
+
+    await env.DB.prepare(
+      `INSERT INTO generated_pieces
+         (id, user_id, diary_entry_id, type, caption, r2_key, mime_type,
+          generation_provider, generation_prompt, created_at, download_count, share_count)
+       VALUES (?, ?, ?, 'image', ?, ?, 'image/jpeg', 'cf-workers-ai-flux-schnell', ?, ?, 0, 0)`
+    ).bind(pieceId, userId, diaryEntryId, caption, r2Key, imagePrompt, ts).run();
+
+    return pieceId;
+  } catch (err) {
+    console.error('piece generation failed', err);
+    return null;
+  }
+}
+
+async function generatePiecesForDiary(env, userId, handle, diaryEntryId, diaryContent, ts) {
+  // 3 pieces in parallel — each ~5-9s; total wall clock ≈ slowest of the three
+  const NUM_PIECES = 3;
+  const tasks = [];
+  for (let i = 0; i < NUM_PIECES; i++) {
+    tasks.push(generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts + i));
+  }
+  const results = await Promise.all(tasks);
+  const created = results.filter(Boolean);
+
+  if (created.length > 0) {
+    await env.DB.prepare(
+      'UPDATE diary_entries SET pieces_generated = ?, moderation_status = ? WHERE id = ?'
+    ).bind(created.length, 'approved', diaryEntryId).run();
+  }
+
+  return created;
+}
+
 // ============ Diary ============
 
 async function handleDiaryCreate(request, env, origin) {
@@ -431,12 +560,17 @@ async function handleDiaryCreate(request, env, origin) {
      VALUES (?, ?, ?, ?, 0, 'pending')`
   ).bind(entryId, r.session.user_id, content, ts).run();
 
-  // TODO week 3: queue Fal.ai generation, on completion insert into generated_pieces
+  // Generate pieces synchronously (Workers AI is fast enough; ~10s total for 3 pieces)
+  const pieceIds = await generatePiecesForDiary(
+    env, r.session.user_id, r.session.handle, entryId, content, ts
+  );
+
   return json(
     {
       ok: true,
       entry_id: entryId,
-      message: 'Diary entry saved. Content generation pipeline lands in week 3.',
+      pieces_generated: pieceIds.length,
+      piece_ids: pieceIds,
     },
     {}, origin
   );
