@@ -479,30 +479,103 @@ async function generateImagePrompt(env, caption) {
   return prompt.slice(0, 400) || 'cinematic portrait of a young person, dramatic lighting';
 }
 
-async function generateImage(env, prompt) {
-  // Flux Schnell on Workers AI returns binary image data
-  const res = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
-    prompt,
-    steps: 4, // Schnell is optimized for 4 steps
-  });
-  // The response shape: { image: 'base64string' }
-  if (res?.image) {
-    const bin = Uint8Array.from(atob(res.image), (c) => c.charCodeAt(0));
-    return bin;
+function arrayBufferToBase64(bytes) {
+  let binary = '';
+  const len = bytes.byteLength;
+  const chunk = 8192;
+  for (let i = 0; i < len; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, len)));
+  }
+  return btoa(binary);
+}
+
+async function getUserSelfieDataUrl(env, userId) {
+  // Try selfie_0 ... selfie_9 across common extensions
+  for (let i = 0; i < 10; i++) {
+    for (const ext of ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif']) {
+      const key = `selfies/${userId}/${i}.${ext}`;
+      const obj = await env.SELFIES.get(key);
+      if (obj) {
+        const bytes = new Uint8Array(await obj.arrayBuffer());
+        const b64 = arrayBufferToBase64(bytes);
+        const mime = obj.httpMetadata?.contentType || `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+        return `data:${mime};base64,${b64}`;
+      }
+    }
   }
   return null;
 }
 
-async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts) {
+async function generateImageFalPulid(env, prompt, referenceImageDataUrl) {
+  if (!env.FAL_API_KEY) return null;
+  const body = {
+    prompt,
+    reference_image_url: referenceImageDataUrl,
+    image_size: 'square_hd',
+    num_inference_steps: 20,
+    guidance_scale: 4,
+    true_cfg: 1.0,
+    id_weight: 1.0,
+    num_images: 1,
+    enable_safety_checker: true,
+  };
+  const res = await fetch('https://fal.run/fal-ai/flux-pulid', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${env.FAL_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    console.error('fal.ai PuLID error', res.status, text.slice(0, 300));
+    return null;
+  }
+  const data = await res.json().catch(() => null);
+  const imageUrl = data?.images?.[0]?.url;
+  if (!imageUrl) {
+    console.error('fal.ai PuLID returned no image url', JSON.stringify(data).slice(0, 200));
+    return null;
+  }
+  const imgRes = await fetch(imageUrl);
+  if (!imgRes.ok) return null;
+  return new Uint8Array(await imgRes.arrayBuffer());
+}
+
+async function generateImageWorkersAi(env, prompt) {
+  const res = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
+    prompt,
+    steps: 4,
+  });
+  if (res?.image) {
+    return Uint8Array.from(atob(res.image), (c) => c.charCodeAt(0));
+  }
+  return null;
+}
+
+async function generateImage(env, prompt, referenceImageDataUrl) {
+  // Prefer Fal.ai PuLID (face-conditioned) when we have both a key and a selfie
+  if (env.FAL_API_KEY && referenceImageDataUrl) {
+    const bytes = await generateImageFalPulid(env, prompt, referenceImageDataUrl);
+    if (bytes) return { bytes, provider: 'fal-flux-pulid' };
+  }
+  // Fall back to Workers AI Flux Schnell (no face)
+  const bytes = await generateImageWorkersAi(env, prompt);
+  if (bytes) return { bytes, provider: 'cf-workers-ai-flux-schnell' };
+  return null;
+}
+
+async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts, referenceImageDataUrl) {
   try {
     const caption = await generateCaption(env, handle, diaryContent);
     const imagePrompt = await generateImagePrompt(env, caption);
-    const imageBytes = await generateImage(env, imagePrompt);
-    if (!imageBytes) return null;
+    const result = await generateImage(env, imagePrompt, referenceImageDataUrl);
+    if (!result) return null;
 
     const pieceId = uid();
     const r2Key = `pieces/${userId}/${pieceId}.jpg`;
-    await env.CONTENT.put(r2Key, imageBytes, {
+    await env.CONTENT.put(r2Key, result.bytes, {
       httpMetadata: { contentType: 'image/jpeg' },
     });
 
@@ -510,8 +583,8 @@ async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent,
       `INSERT INTO generated_pieces
          (id, user_id, diary_entry_id, type, caption, r2_key, mime_type,
           generation_provider, generation_prompt, created_at, download_count, share_count)
-       VALUES (?, ?, ?, 'image', ?, ?, 'image/jpeg', 'cf-workers-ai-flux-schnell', ?, ?, 0, 0)`
-    ).bind(pieceId, userId, diaryEntryId, caption, r2Key, imagePrompt, ts).run();
+       VALUES (?, ?, ?, 'image', ?, ?, 'image/jpeg', ?, ?, ?, 0, 0)`
+    ).bind(pieceId, userId, diaryEntryId, caption, r2Key, result.provider, imagePrompt, ts).run();
 
     return pieceId;
   } catch (err) {
@@ -521,11 +594,13 @@ async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent,
 }
 
 async function generatePiecesForDiary(env, userId, handle, diaryEntryId, diaryContent, ts) {
-  // 3 pieces in parallel — each ~5-9s; total wall clock ≈ slowest of the three
+  // Load reference selfie once and reuse for all 3 parallel pieces
+  const selfieDataUrl = await getUserSelfieDataUrl(env, userId);
+
   const NUM_PIECES = 3;
   const tasks = [];
   for (let i = 0; i < NUM_PIECES; i++) {
-    tasks.push(generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts + i));
+    tasks.push(generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts + i, selfieDataUrl));
   }
   const results = await Promise.all(tasks);
   const created = results.filter(Boolean);
