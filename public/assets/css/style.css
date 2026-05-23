@@ -31,7 +31,6 @@ html {
 body {
   min-height: 100vh;
   min-height: 100dvh;
-  overscroll-behavior: none;
   background: var(--bg);
 }
 
@@ -49,15 +48,12 @@ img, svg { display: block; max-width: 100%; }
   padding-bottom: max(24px, env(safe-area-inset-bottom));
 }
 
-/* Home page: locked single-screen video hero, no scroll */
+/* Home page: single-screen video hero. Body is the scrolling root so pull-to-refresh works. */
 .mf-home {
   background: var(--bg);
-  overflow: hidden;
   height: 100vh;
   height: 100dvh;
-  position: fixed;
-  inset: 0;
-  width: 100%;
+  overflow: hidden;
 }
 
 /* ============ VIDEO HERO ============ */
