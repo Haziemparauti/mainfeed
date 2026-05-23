@@ -22,6 +22,10 @@ bucket_name = "mainfeed-content"
 binding = "SELFIES"
 bucket_name = "mainfeed-selfies"
 
+[[r2_buckets]]
+binding = "STOCK"
+bucket_name = "mainfeed-stock"
+
 # Workers AI (Llama 3.1 for captions, Flux Schnell for images)
 [ai]
 binding = "AI"
