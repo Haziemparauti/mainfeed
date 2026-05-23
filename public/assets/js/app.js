@@ -40,6 +40,8 @@ let currentUser = null;
     currentUser = me.user;
     paintMe(currentUser);
     await loadFeed();
+    // Show check-in card if it's time
+    maybeShowCheckin();
   } catch (err) {
     console.error('boot error', err);
     window.location.href = '/login.html';
@@ -272,6 +274,119 @@ function drawWatermark(ctx, w, h, text) {
   const padY = Math.max(10, Math.round(h * 0.015));
   ctx.strokeText(text, w - padX, h - padY);
   ctx.fillText(text, w - padX, h - padY);
+}
+
+// ============ Check-in card (top of feed) ============
+
+async function maybeShowCheckin() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const lastShown = localStorage.getItem('mf_checkin_last_date');
+    const isFirstOpenToday = lastShown !== today;
+    // First open today: always show. Subsequent opens same day: 30% chance.
+    if (!isFirstOpenToday && Math.random() > 0.3) return;
+
+    const res = await fetch(`${API}/api/checkin/questions`, { credentials: 'include' });
+    if (!res.ok) return;
+    const data = await res.json().catch(() => ({}));
+    const questions = data?.questions || [];
+    if (questions.length === 0) return;
+
+    renderCheckinCard(questions);
+    localStorage.setItem('mf_checkin_last_date', today);
+  } catch (err) {
+    console.warn('checkin maybe-show failed', err);
+  }
+}
+
+function renderCheckinCard(questions) {
+  const feed = $('#mf-feed');
+  if (!feed) return;
+  const card = document.createElement('section');
+  card.className = 'mf-checkin-card';
+  card.innerHTML = `
+    <div class="mf-checkin-head">
+      <h3>tell us a bit more</h3>
+      <button class="mf-checkin-close" aria-label="Skip">×</button>
+    </div>
+    <div class="mf-checkin-body"></div>
+    <button class="mf-cta mf-cta-block" data-checkin-submit>Save</button>
+  `;
+  const body = card.querySelector('.mf-checkin-body');
+  questions.forEach((q, i) => {
+    const block = document.createElement('div');
+    block.dataset.checkinQid = q.id;
+    block.dataset.checkinType = q.type;
+    let inputs = '';
+    if (q.type === 'single') {
+      inputs = `<div class="mf-checkin-opts">${
+        q.options.map((o) => `<button type="button" class="mf-checkin-opt" data-checkin-val="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join('')
+      }</div>`;
+    } else if (q.type === 'text') {
+      inputs = `<input type="text" class="mf-checkin-text" placeholder="${escapeHtml(q.placeholder || '')}" maxlength="200" />`;
+    }
+    block.innerHTML = `<div class="mf-checkin-q">${escapeHtml(q.text)}</div>${inputs}`;
+    body.appendChild(block);
+  });
+  feed.insertBefore(card, feed.firstChild);
+
+  // Single-choice selection
+  card.addEventListener('click', (e) => {
+    const opt = e.target.closest('[data-checkin-val]');
+    if (opt) {
+      const block = opt.closest('[data-checkin-qid]');
+      block.querySelectorAll('[data-checkin-val]').forEach((b) => (b.dataset.selected = 'false'));
+      opt.dataset.selected = 'true';
+      return;
+    }
+    if (e.target.closest('.mf-checkin-close')) {
+      card.remove();
+      return;
+    }
+    if (e.target.closest('[data-checkin-submit]')) {
+      submitCheckin(card);
+    }
+  });
+}
+
+async function submitCheckin(card) {
+  const answers = {};
+  card.querySelectorAll('[data-checkin-qid]').forEach((block) => {
+    const qid = block.dataset.checkinQid;
+    const type = block.dataset.checkinType;
+    if (type === 'single') {
+      const picked = block.querySelector('[data-selected="true"]');
+      if (picked) answers[qid] = picked.dataset.checkinVal;
+    } else if (type === 'text') {
+      const val = block.querySelector('.mf-checkin-text')?.value.trim();
+      if (val) answers[qid] = val;
+    }
+  });
+  if (Object.keys(answers).length === 0) {
+    alert('Pick or type at least one answer (or just close the card).');
+    return;
+  }
+  const submitBtn = card.querySelector('[data-checkin-submit]');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving…';
+  try {
+    const res = await fetch(`${API}/api/checkin/submit`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(`Couldn't save (${data.error || 'unknown'}). Try again.`);
+      return;
+    }
+    card.remove();
+    await loadFeed();
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Save';
+  }
 }
 
 // ============ Diary ============

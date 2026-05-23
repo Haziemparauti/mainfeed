@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
   paddle_customer_id TEXT,
   daily_pieces_count INTEGER NOT NULL DEFAULT 0,
   daily_pieces_reset_at INTEGER NOT NULL DEFAULT 0,
-  deleted_at INTEGER
+  deleted_at INTEGER,
+  profile TEXT  -- JSON: { onboarding: {...}, checkins: [...] }
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_handle ON users(handle);

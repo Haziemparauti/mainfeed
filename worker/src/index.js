@@ -226,14 +226,22 @@ async function handleSignup(request, env, origin) {
   const email = String(form.get('email') || '').toLowerCase().trim();
   const password = String(form.get('password') || '');
   const consentAge = form.get('consent_age') === 'true';
-  const consentAi = form.get('consent_ai') === 'true';
   const consentTerms = form.get('consent_terms') === 'true';
+  // Profile (onboarding answers) sent as JSON string
+  let profile = null;
+  try {
+    const raw = form.get('profile');
+    if (raw) profile = JSON.parse(String(raw));
+  } catch (e) {
+    return errResp('invalid_profile', 400, origin);
+  }
 
   if (!isHandle(handle)) return errResp('invalid_handle', 400, origin);
   if (RESERVED_HANDLES.has(handle)) return errResp('reserved_handle', 400, origin);
   if (!isEmail(email)) return errResp('invalid_email', 400, origin);
   if (!isPassword(password)) return errResp('weak_password', 400, origin);
-  if (!consentAge || !consentAi || !consentTerms) return errResp('consent_required', 400, origin);
+  if (!consentAge || !consentTerms) return errResp('consent_required', 400, origin);
+  if (!profile || typeof profile !== 'object') return errResp('profile_required', 400, origin);
 
   // Collect selfies
   const selfies = [];
@@ -261,13 +269,15 @@ async function handleSignup(request, env, origin) {
   const userId = uid();
   const ts = now();
 
+  // consent_ai is folded into Terms acceptance — both are true when consentTerms is true
+  const profileJson = JSON.stringify({ onboarding: profile, checkins: [] });
   await env.DB.prepare(
     `INSERT INTO users
        (id, handle, email, password_hash, created_at,
         liveness_verified, consent_18, consent_ai, consent_terms,
-        selfies_count, plan, daily_pieces_count, daily_pieces_reset_at)
-     VALUES (?, ?, ?, ?, ?, 0, 1, 1, 1, ?, 'free', 0, ?)`
-  ).bind(userId, handle, email, passwordHash, ts, selfies.length, ts).run();
+        selfies_count, plan, daily_pieces_count, daily_pieces_reset_at, profile)
+     VALUES (?, ?, ?, ?, ?, 0, 1, 1, 1, ?, 'free', 0, ?, ?)`
+  ).bind(userId, handle, email, passwordHash, ts, selfies.length, ts, profileJson).run();
 
   // Upload selfies to R2
   for (let i = 0; i < selfies.length; i++) {
@@ -497,25 +507,111 @@ caption: "POV: surviving Monday and immediately needing to recover" -> young per
 
 Output ONLY the visual description. No quotes, no preamble.`;
 
-// Hardcoded welcome piece — first content a new user sees after signup
-const WELCOME_CAPTION = 'POV: you already regret signing up for your own main character feed';
-const WELCOME_IMAGE_PROMPT = 'young person in dim bedroom holding phone, illuminated by the phone screen glow, slightly worried slightly intrigued expression, soft evening light, cinematic candid';
+// Welcome scenarios — every new user gets one of these randomly
+const WELCOME_SCENARIOS = [
+  {
+    caption: 'POV: you already regret signing up for your own main character feed',
+    prompt: 'young person in dim bedroom holding phone, illuminated by phone screen glow, slightly worried slightly intrigued expression, soft evening light, cinematic candid'
+  },
+  {
+    caption: 'POV: you just signed up and already worried what the AI is gonna say',
+    prompt: 'young person looking at phone with raised eyebrows, slight concerned smile, soft indoor light, candid film still'
+  },
+  {
+    caption: 'POV: stepping into your main character arc you didn\'t ask for',
+    prompt: 'young person standing in dramatic doorway with confident walking pose, golden hour light streaming in behind, cinematic film still'
+  },
+  {
+    caption: 'POV: realising the AI knows you better than you do',
+    prompt: 'young person staring wide-eyed at phone screen in dim bedroom, blue screen glow on face, slight panic, dramatic film still'
+  },
+  {
+    caption: 'me explaining to my friends why i made a mainfeed:',
+    prompt: 'young person mid-conversation gesturing with hands, slightly defensive smile, cozy cafe or living room setting, warm natural lighting'
+  },
+  {
+    caption: 'when the app you just signed up for already starts roasting you',
+    prompt: 'young person looking at phone mouth slightly open in disbelief, slight smile, soft indoor lighting, candid'
+  },
+  {
+    caption: 'POV: signed up for the app where i am the only protagonist',
+    prompt: 'young person walking confidently with phone in hand, blurred soft background, cinematic depth of field, golden hour light'
+  },
+  {
+    caption: 'first day on mainfeed energy',
+    prompt: 'young person leaning back on couch with phone, content small smile, cozy living room with warm evening light'
+  },
+  {
+    caption: 'POV: about to find out what the AI thinks of you',
+    prompt: 'young person staring intently at phone, slight nervous smile, late afternoon golden light through window, candid'
+  },
+  {
+    caption: 'POV: trapped on an app that only generates content about me',
+    prompt: 'young person on bed surrounded by pillows, phone held close to face, slight dazed amused expression, warm bedroom lighting'
+  },
+];
 
-async function generateCaption(env, handle, diaryContent) {
+function pickWelcomeScenario() {
+  return WELCOME_SCENARIOS[Math.floor(Math.random() * WELCOME_SCENARIOS.length)];
+}
+
+function buildProfileSummary(profileJson) {
+  if (!profileJson) return '';
+  try {
+    const p = typeof profileJson === 'string' ? JSON.parse(profileJson) : profileJson;
+    const o = p.onboarding || {};
+    const parts = [];
+    if (o.gender) parts.push(`gender: ${o.gender}`);
+    if (o.age_range) parts.push(`age: ${o.age_range}`);
+    if (o.daily_life) parts.push(`does: ${o.daily_life}${o.studying_what ? ' (' + o.studying_what + ')' : ''}${o.work_field ? ' (' + o.work_field + ')' : ''}`);
+    if (o.day_vibe) parts.push(`days feel: ${o.day_vibe}`);
+    if (Array.isArray(o.hobbies) && o.hobbies.length) parts.push(`hobbies: ${o.hobbies.join(', ')}`);
+    if (o.personality) parts.push(`personality: ${o.personality}`);
+    if (o.animals) parts.push(`animals: ${o.animals}${o.pet_type ? ' (' + o.pet_type + ')' : ''}`);
+    if (o.relationship) parts.push(`relationship: ${o.relationship}`);
+    if (o.kids) parts.push(`kids: ${o.kids}`);
+    if (o.one_word) parts.push(`self-described as: ${o.one_word}`);
+    // Last few check-ins
+    const checkins = Array.isArray(p.checkins) ? p.checkins.slice(-5) : [];
+    if (checkins.length) {
+      const recent = checkins.map(c => {
+        const a = c.answers || {};
+        return Object.entries(a).map(([k, v]) => `${k}=${v}`).join(', ');
+      }).filter(Boolean).join(' | ');
+      if (recent) parts.push(`recent answers: ${recent}`);
+    }
+    return parts.join('. ');
+  } catch (e) {
+    return '';
+  }
+}
+
+async function fetchRecentCaptions(env, userId, limit = 3) {
+  const rows = await env.DB.prepare(
+    `SELECT caption FROM generated_pieces WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`
+  ).bind(userId, limit).all();
+  return (rows.results || []).map(r => r.caption).filter(Boolean);
+}
+
+async function generateCaption(env, handle, diaryContent, profileSummary, recentCaptions) {
   const system = CAPTION_SYSTEM_PROMPT.replace(/\{handle\}/g, handle);
+  const contextLines = [];
+  if (profileSummary) contextLines.push(`User context: ${profileSummary}`);
+  if (recentCaptions && recentCaptions.length) {
+    contextLines.push(`Recent captions you wrote for them (don't repeat the same joke):\n- ${recentCaptions.join('\n- ')}`);
+  }
+  const userMsg = (contextLines.length ? contextLines.join('\n\n') + '\n\n' : '') + `diary: "${diaryContent.slice(0, 400)}" ->`;
   const res = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
     messages: [
       { role: 'system', content: system },
-      { role: 'user', content: `diary: "${diaryContent.slice(0, 400)}" ->` },
+      { role: 'user', content: userMsg },
     ],
-    max_tokens: 60,
-    temperature: 0.85,
+    max_tokens: 80,
+    temperature: 0.9,
   });
   let caption = (res?.response || '').trim();
-  // Strip leading "->" if model echoed it, strip surrounding quotes
   caption = caption.replace(/^["'`]+|["'`]+$/g, '').replace(/^->\s*/, '').trim();
-  // Hard cap to 200 chars
-  return caption.slice(0, 200) || `@${handle} living that mainfeed life`;
+  return caption.slice(0, 240) || `POV: @${handle} living that mainfeed life`;
 }
 
 async function generateImagePrompt(env, caption) {
@@ -622,9 +718,9 @@ async function generateImage(env, prompt, referenceImageDataUrl) {
   return null;
 }
 
-async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts, referenceImageDataUrl) {
+async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts, referenceImageDataUrl, profileSummary, recentCaptions) {
   try {
-    const caption = await generateCaption(env, handle, diaryContent);
+    const caption = await generateCaption(env, handle, diaryContent, profileSummary, recentCaptions);
     const imagePrompt = await generateImagePrompt(env, caption);
     const result = await generateImage(env, imagePrompt, referenceImageDataUrl);
     if (!result) return null;
@@ -650,9 +746,15 @@ async function generateOnePiece(env, userId, handle, diaryEntryId, diaryContent,
 }
 
 async function generatePiecesForDiary(env, userId, handle, diaryEntryId, diaryContent, ts) {
-  // ONE piece per diary entry (reduced from 3 — cost + the smart-mix happens via the cron, not per-event)
-  const selfieDataUrl = await getUserSelfieDataUrl(env, userId);
-  const pieceId = await generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts, selfieDataUrl);
+  // ONE piece per diary entry. Cron handles volume separately.
+  const [selfieDataUrl, profileRow, recentCaptions] = await Promise.all([
+    getUserSelfieDataUrl(env, userId),
+    env.DB.prepare('SELECT profile FROM users WHERE id = ?').bind(userId).first(),
+    fetchRecentCaptions(env, userId, 3),
+  ]);
+  const profileSummary = buildProfileSummary(profileRow?.profile);
+
+  const pieceId = await generateOnePiece(env, userId, handle, diaryEntryId, diaryContent, ts, selfieDataUrl, profileSummary, recentCaptions);
   const created = pieceId ? [pieceId] : [];
 
   if (created.length > 0) {
@@ -664,11 +766,12 @@ async function generatePiecesForDiary(env, userId, handle, diaryEntryId, diaryCo
   return created;
 }
 
-// Welcome piece — generated once at signup, hardcoded caption + prompt (no LLM calls = faster + consistent)
+// Welcome piece — random POV scenario, no LLM calls (faster + consistent), face-conditioned via PuLID
 async function generateWelcomePiece(env, userId, handle, ts) {
   try {
     const selfieDataUrl = await getUserSelfieDataUrl(env, userId);
-    const result = await generateImage(env, WELCOME_IMAGE_PROMPT, selfieDataUrl);
+    const scenario = pickWelcomeScenario();
+    const result = await generateImage(env, scenario.prompt, selfieDataUrl);
     if (!result) return null;
 
     const pieceId = uid();
@@ -682,13 +785,111 @@ async function generateWelcomePiece(env, userId, handle, ts) {
          (id, user_id, diary_entry_id, type, caption, r2_key, mime_type,
           generation_provider, generation_prompt, created_at, download_count, share_count)
        VALUES (?, ?, NULL, 'image', ?, ?, 'image/jpeg', ?, ?, ?, 0, 0)`
-    ).bind(pieceId, userId, WELCOME_CAPTION, r2Key, result.provider, WELCOME_IMAGE_PROMPT, ts).run();
+    ).bind(pieceId, userId, scenario.caption, r2Key, result.provider, scenario.prompt, ts).run();
 
     return pieceId;
   } catch (err) {
     console.error('welcome piece generation failed', err);
     return null;
   }
+}
+
+// ============ Check-in cards (popup questions to deepen profile) ============
+
+const CHECKIN_POOL = [
+  { id: 'today_mood', text: 'How was today, really?', type: 'single', options: ['great', 'good', 'mid', 'rough', "i don't wanna talk about it"] },
+  { id: 'best_part_today', text: 'Best part of today?', type: 'text', placeholder: 'one line' },
+  { id: 'worst_part_today', text: 'Anything ruin your day?', type: 'text', placeholder: 'or leave blank' },
+  { id: 'sleep_hours', text: 'How much sleep did you get?', type: 'single', options: ['8+ hours', '6-8', '4-6', 'less than 4 lol'] },
+  { id: 'morning_night', text: 'Morning person or night owl?', type: 'single', options: ['morning', 'night', 'somewhere in between'] },
+  { id: 'coffee_tea', text: 'Coffee or tea?', type: 'single', options: ['coffee', 'tea', 'both', 'neither'] },
+  { id: 'going_out_tonight', text: 'Going out tonight or staying in?', type: 'single', options: ['going out', 'staying in', "haven't decided", 'depends on the vibe'] },
+  { id: 'vacation_dream', text: 'Where would you wanna be right now?', type: 'text', placeholder: 'place or vibe' },
+  { id: 'pet_peeve', text: "What's a small thing that pisses you off?", type: 'text' },
+  { id: 'cooking', text: 'Do you cook?', type: 'single', options: ['yes love it', 'kinda', 'i order in', 'i microwave'] },
+  { id: 'gym', text: 'Gym situation?', type: 'single', options: ['regular', 'sometimes', 'never been', 'membership i never use'] },
+  { id: 'environment', text: 'Do you care about the environment?', type: 'single', options: ['yes a lot', 'kinda', 'not really', 'i recycle that\'s it'] },
+  { id: 'red_flag', text: 'Biggest red flag in someone?', type: 'text' },
+  { id: 'guilty_pleasure', text: 'Guilty pleasure?', type: 'text' },
+  { id: 'last_cried', text: 'Last time you cried?', type: 'single', options: ['this week', 'this month', 'this year', "can't remember", "don't cry"] },
+  { id: 'social_battery', text: 'Social battery this week?', type: 'single', options: ['full', 'medium', 'running low', 'dead'] },
+  { id: 'weekend_vibe', text: 'Ideal weekend?', type: 'single', options: ['out with people', 'home alone in bed', 'something productive', 'mix of all'] },
+  { id: 'biggest_lie', text: 'Biggest lie you tell yourself?', type: 'text' },
+  { id: 'comfort_food', text: 'Comfort food?', type: 'text' },
+  { id: 'last_app', text: 'Last app you opened before mainfeed?', type: 'single', options: ['instagram', 'tiktok', 'x/twitter', 'whatsapp', 'something else'] },
+];
+
+async function handleCheckinQuestions(request, env, origin) {
+  const r = await requireSession(request, env, origin);
+  if (r.error) return r.error;
+  // Pick 3 random questions the user hasn't answered yet (lightweight — just random for v0)
+  const userRow = await env.DB.prepare('SELECT profile FROM users WHERE id = ?').bind(r.session.user_id).first();
+  let answered = new Set();
+  try {
+    const p = JSON.parse(userRow?.profile || '{}');
+    for (const c of (p.checkins || [])) {
+      for (const k of Object.keys(c.answers || {})) answered.add(k);
+    }
+  } catch {}
+  const pool = CHECKIN_POOL.filter(q => !answered.has(q.id));
+  const sample = pool.length ? pool : CHECKIN_POOL; // fall back to all if exhausted
+  // Random 3 (or however many remain)
+  const shuffled = [...sample].sort(() => Math.random() - 0.5);
+  const picks = shuffled.slice(0, 3);
+  return json({ ok: true, questions: picks }, {}, origin);
+}
+
+async function handleCheckinSubmit(request, env, origin) {
+  const r = await requireSession(request, env, origin);
+  if (r.error) return r.error;
+
+  const rl = await rateLimit(env, `checkin:${r.session.user_id}`, 20, 3600);
+  if (!rl.allowed) return errResp('rate_limited', 429, origin);
+
+  const body = await request.json().catch(() => ({}));
+  const answers = body?.answers && typeof body.answers === 'object' ? body.answers : null;
+  if (!answers) return errResp('empty_answers', 400, origin);
+
+  // Validate keys are known + values are strings/arrays
+  const validIds = new Set(CHECKIN_POOL.map(q => q.id));
+  const clean = {};
+  for (const [k, v] of Object.entries(answers)) {
+    if (!validIds.has(k)) continue;
+    if (typeof v === 'string') clean[k] = v.slice(0, 200);
+    else if (Array.isArray(v)) clean[k] = v.slice(0, 10).map(x => String(x).slice(0, 100));
+  }
+  if (Object.keys(clean).length === 0) return errResp('no_valid_answers', 400, origin);
+
+  // Merge into user's profile.checkins
+  const userRow = await env.DB.prepare('SELECT profile FROM users WHERE id = ?').bind(r.session.user_id).first();
+  let profile = {};
+  try { profile = JSON.parse(userRow?.profile || '{}'); } catch {}
+  if (!profile.checkins) profile.checkins = [];
+  profile.checkins.push({ ts: now(), answers: clean });
+  // Cap last 50 check-ins to keep profile size sane
+  if (profile.checkins.length > 50) profile.checkins = profile.checkins.slice(-50);
+  await env.DB.prepare('UPDATE users SET profile = ? WHERE id = ?').bind(JSON.stringify(profile), r.session.user_id).run();
+
+  // Trigger a piece based on the new info (treat answers as a synthetic diary entry)
+  const synthetic = Object.entries(clean).map(([k, v]) => {
+    const q = CHECKIN_POOL.find(x => x.id === k);
+    const qt = q ? q.text : k;
+    return `${qt} ${Array.isArray(v) ? v.join(', ') : v}`;
+  }).join('. ');
+
+  if (synthetic) {
+    const ts = now();
+    const entryId = uid();
+    await env.DB.prepare(
+      `INSERT INTO diary_entries (id, user_id, content, created_at, pieces_generated, moderation_status)
+       VALUES (?, ?, ?, ?, 0, 'approved')`
+    ).bind(entryId, r.session.user_id, '[checkin] ' + synthetic, ts).run();
+    // Fire-and-forget the piece generation (don't block response — user sees it appear on next feed refresh)
+    // Actually for sync UX, await briefly:
+    await generatePiecesForDiary(env, r.session.user_id, r.session.handle, entryId, synthetic, ts);
+  }
+
+  return json({ ok: true, saved: Object.keys(clean).length }, {}, origin);
 }
 
 // ============ Diary ============
@@ -763,6 +964,10 @@ export default {
 
     // Diary
     if (method === 'POST' && path === '/api/diary/create') return handleDiaryCreate(request, env, origin);
+
+    // Check-in cards
+    if (method === 'GET' && path === '/api/checkin/questions') return handleCheckinQuestions(request, env, origin);
+    if (method === 'POST' && path === '/api/checkin/submit') return handleCheckinSubmit(request, env, origin);
 
     return errResp('not_found', 404, origin, { path });
   },

@@ -555,8 +555,195 @@ img, svg { display: block; max-width: 100%; }
 .mf-progress[data-step="1"] span:nth-child(-n+1),
 .mf-progress[data-step="2"] span:nth-child(-n+2),
 .mf-progress[data-step="3"] span:nth-child(-n+3),
-.mf-progress[data-step="4"] span:nth-child(-n+4) {
+.mf-progress[data-step="4"] span:nth-child(-n+4),
+.mf-progress[data-step="5"] span:nth-child(-n+5) {
   background: var(--accent-grad);
+}
+
+/* ============ ONBOARDING ============ */
+
+.mf-ob-progress {
+  font-size: 12px;
+  color: var(--text-mute);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.mf-ob-q {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin-bottom: 20px;
+}
+
+.mf-ob-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mf-ob-opt {
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  padding: 16px 18px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.mf-ob-opt:active {
+  transform: scale(0.985);
+  background: rgba(255, 49, 49, 0.1);
+  border-color: var(--accent);
+}
+
+.mf-ob-multi {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mf-ob-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  padding: 14px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.mf-ob-chip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mf-ob-chip:has(input:checked) {
+  background: rgba(255, 49, 49, 0.16);
+  border-color: var(--accent);
+}
+
+.mf-ob-hint {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.mf-ob-text {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  padding: 16px 18px;
+  font-size: 16px;
+  color: var(--text);
+  outline: 0;
+  transition: border-color 0.15s ease;
+}
+
+.mf-ob-text:focus {
+  border-color: var(--accent);
+}
+
+/* ============ CHECK-IN CARD (top of feed) ============ */
+
+.mf-checkin-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 0 16px 16px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mf-checkin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mf-checkin-head h3 {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.mf-checkin-head .mf-checkin-close {
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 0;
+  color: var(--text-mute);
+  font-size: 20px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.mf-checkin-head .mf-checkin-close:active {
+  background: var(--border);
+}
+
+.mf-checkin-q {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.mf-checkin-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.mf-checkin-opt {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.mf-checkin-opt[data-selected="true"] {
+  background: rgba(255, 49, 49, 0.18);
+  border-color: var(--accent);
+}
+
+.mf-checkin-text {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--text);
+  outline: 0;
+}
+
+.mf-checkin-text:focus {
+  border-color: var(--accent);
 }
 
 /* Selfie upload grid */

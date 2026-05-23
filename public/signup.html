@@ -7,12 +7,12 @@
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square.svg?v=3" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=3" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=4" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
-    <button class="mf-back" type="button" aria-label="Go back" onclick="history.length>1?history.back():location.href=&apos;/&apos;">
+    <button class="mf-back" type="button" aria-label="Go back" onclick="history.length>1?history.back():location.href='/'">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"></polyline></svg>
     </button>
     <a href="/" class="mf-brand">
@@ -23,7 +23,7 @@
 
   <main class="mf-form-wrap">
     <div class="mf-progress" data-step="1">
-      <span></span><span></span><span></span><span></span>
+      <span></span><span></span><span></span><span></span><span></span>
     </div>
 
     <section class="mf-step" data-step="1">
@@ -44,7 +44,7 @@
 
     <section class="mf-step" data-step="2" hidden>
       <h1>Upload 5 selfies</h1>
-      <p class="mf-sub">Front-facing, clear lighting. AI checks they match each other. We use these to generate content of you.</p>
+      <p class="mf-sub">Front-facing, clear lighting. The AI uses these to put your face in your feed.</p>
       <div class="mf-selfie-grid">
         <label class="mf-selfie-slot"><input type="file" accept="image/*" /><span>+</span></label>
         <label class="mf-selfie-slot"><input type="file" accept="image/*" /><span>+</span></label>
@@ -58,32 +58,34 @@
 
     <section class="mf-step" data-step="3" hidden>
       <h1>Quick face check</h1>
-      <p class="mf-sub">30 seconds. Record a short selfie video so we know it's actually you. Stops imposters from making a Mainfeed in your name.</p>
+      <p class="mf-sub">30 seconds. Stops imposters from making a Mainfeed in your name.</p>
       <div class="mf-liveness-stage" id="mf-liveness-stage">
         <button class="mf-cta mf-cta-block" data-action="start-liveness">Start face check</button>
       </div>
     </section>
 
     <section class="mf-step" data-step="4" hidden>
+      <h1>A few quick questions</h1>
+      <p class="mf-sub">The AI uses these to make content that actually feels like you. ~30 seconds.</p>
+      <div id="mf-onboarding"></div>
+    </section>
+
+    <section class="mf-step" data-step="5" hidden>
       <h1>One last thing</h1>
-      <p class="mf-sub">Three quick agreements and your Mainfeed goes live.</p>
+      <p class="mf-sub">Two quick agreements and your Mainfeed goes live.</p>
       <label class="mf-check">
         <input type="checkbox" id="mf-consent-age" />
         <span>I'm 18 or older.</span>
       </label>
       <label class="mf-check">
-        <input type="checkbox" id="mf-consent-ai" />
-        <span>I consent to my face being used to generate AI content for my private feed. I can delete anytime.</span>
-      </label>
-      <label class="mf-check">
         <input type="checkbox" id="mf-consent-terms" />
-        <span>I agree to the <a href="/terms.html">Terms</a> and <a href="/privacy.html">Privacy</a>.</span>
+        <span>I agree to the <a href="/terms.html">Terms</a> (covering AI generation of my likeness for my private feed) and <a href="/privacy.html">Privacy</a>.</span>
       </label>
       <button class="mf-cta mf-cta-block" data-action="finish">Create my Mainfeed</button>
     </section>
 
   </main>
 
-  <script src="/assets/js/auth.js?v=3" type="module"></script>
+  <script src="/assets/js/auth.js?v=4" type="module"></script>
 </body>
 </html>
