@@ -16,10 +16,34 @@
       <img src="/assets/img/logo-square2.svg?v=6" alt="" class="mf-brand-icon" width="32" height="32" />
       <img src="/assets/img/logo-rect2.svg?v=6" alt="Mainfeed" class="mf-brand-mark" />
     </a>
-    <a href="/profile.html" class="mf-avatar">
+    <button class="mf-avatar" id="mf-app-menu-toggle" aria-label="Open menu" type="button">
       <span id="mf-avatar-initial">?</span>
-    </a>
+    </button>
   </header>
+
+  <nav class="mf-menu" id="mf-app-menu" hidden aria-label="Account menu">
+    <div class="mf-menu-head">
+      <div class="mf-app-menu-user">
+        <div class="mf-app-menu-avatar"><span id="mf-app-menu-initial">?</span></div>
+        <div>
+          <div class="mf-app-menu-handle" id="mf-app-menu-handle">@you</div>
+          <div class="mf-app-menu-email" id="mf-app-menu-email"></div>
+        </div>
+      </div>
+      <button class="mf-menu-close" aria-label="Close menu" id="mf-app-menu-close" type="button">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="6" y1="6" x2="18" y2="18"/>
+          <line x1="18" y1="6" x2="6" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <ul class="mf-menu-list">
+      <li><a href="#" id="mf-menu-public-profile">My public profile</a></li>
+      <li><a href="#" id="mf-menu-logout">Log out</a></li>
+      <li><a href="/terms.html">Terms</a></li>
+      <li><a href="/privacy.html">Privacy</a></li>
+    </ul>
+  </nav>
 
   <main class="mf-app-main">
 
