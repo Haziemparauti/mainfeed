@@ -1039,6 +1039,137 @@ export default {
     if (method === 'GET' && path === '/api/checkin/questions') return handleCheckinQuestions(request, env, origin);
     if (method === 'POST' && path === '/api/checkin/submit') return handleCheckinSubmit(request, env, origin);
 
+    // Admin: stock library batch generation + download
+    if (method === 'POST' && path === '/api/admin/batch-gen-stock') return handleAdminBatchGenStock(request, env, origin);
+    if (method === 'GET' && path === '/api/admin/stock/list') return handleAdminStockList(request, env, origin);
+    const stockFileMatch = path.match(/^\/api\/admin\/stock\/file\/([A-Za-z0-9_.-]+)$/);
+    if (method === 'GET' && stockFileMatch) return handleAdminStockFile(request, env, origin, stockFileMatch[1]);
+
     return errResp('not_found', 404, origin, { path });
   },
 };
+
+// ============ ADMIN: stock library batch generation via Fal.ai ============
+
+function checkAdmin(request, env) {
+  const auth = request.headers.get('Authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  return token && env.ADMIN_TOKEN && token === env.ADMIN_TOKEN;
+}
+
+// Submit a Hunyuan generation request and return the video bytes
+// HARD RULE (user 2026-05-24): only use fal-ai/hunyuan-video-v1.5/text-to-video — this is the $0.07/clip model
+// Do NOT swap to any other Hunyuan variant without explicit user approval — others cost significantly more
+async function falHunyuanGenerate(env, prompt) {
+  if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
+  const body = {
+    prompt,
+    aspect_ratio: '9:16',
+    resolution: '480p',
+    num_frames: 121,        // ~5s at 24fps
+    sync_mode: true,         // block until result ready
+    enable_safety_checker: true,
+  };
+  const res = await fetch('https://queue.fal.run/fal-ai/hunyuan-video-v1.5/text-to-video', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${env.FAL_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { error: `fal_${res.status}`, detail: text.slice(0, 300) };
+  }
+  const data = await res.json().catch(() => null);
+  const videoUrl = data?.video?.url || data?.videos?.[0]?.url;
+  if (!videoUrl) {
+    return { error: 'no_video_url', detail: JSON.stringify(data).slice(0, 300) };
+  }
+  const videoRes = await fetch(videoUrl);
+  if (!videoRes.ok) {
+    return { error: 'video_download_failed', detail: `status ${videoRes.status}` };
+  }
+  const bytes = new Uint8Array(await videoRes.arrayBuffer());
+  return { bytes, fal_video_url: videoUrl };
+}
+
+// POST /api/admin/batch-gen-stock — generate a batch of stock clips in parallel
+// Body: { tasks: [ { filename, scenario, gender, variant, prompt, use_for, captions, mood, face_swap_needed }, ... ] }
+async function handleAdminBatchGenStock(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+
+  const body = await request.json().catch(() => ({}));
+  const tasks = Array.isArray(body.tasks) ? body.tasks : [];
+  if (tasks.length === 0) return errResp('empty_batch', 400, origin);
+  if (tasks.length > 50) return errResp('batch_too_large', 400, origin);
+
+  const results = await Promise.all(tasks.map(async (t) => {
+    const filename = String(t.filename || '').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 100);
+    if (!filename) return { filename: '', status: 'failed', error: 'invalid_filename' };
+    try {
+      const gen = await falHunyuanGenerate(env, String(t.prompt || ''));
+      if (gen.error) {
+        return { filename, status: 'failed', error: gen.error, detail: gen.detail };
+      }
+      const r2Key = `stock/${filename}.mp4`;
+      await env.STOCK.put(r2Key, gen.bytes, {
+        httpMetadata: { contentType: 'video/mp4' },
+      });
+      const stockId = uid();
+      const ts = now();
+      await env.DB.prepare(
+        `INSERT INTO stock_library
+           (id, r2_key, type, source, source_id, duration, width, height,
+            mood, scenario, composition, tags, face_track_data, active, created_at,
+            gender, variant, filename, captions, face_swap_needed, use_for)
+         VALUES (?, ?, 'video', 'fal-hunyuan', ?, 5.0, 480, 848,
+                 ?, ?, ?, ?, NULL, 1, ?,
+                 ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        stockId, r2Key, filename,
+        String(t.mood || ''), String(t.scenario || ''),
+        String(t.composition || 'mid'),
+        Array.isArray(t.tags) ? t.tags.join(',') : String(t.tags || ''),
+        ts,
+        String(t.gender || 'unisex'),
+        Number(t.variant || 1),
+        filename,
+        Array.isArray(t.captions) ? t.captions.join('|') : String(t.captions || ''),
+        t.face_swap_needed === false ? 0 : 1,
+        Array.isArray(t.use_for) ? t.use_for.join(',') : String(t.use_for || '')
+      ).run();
+      return { filename, status: 'ok', stock_id: stockId, r2_key: r2Key, bytes: gen.bytes.length };
+    } catch (err) {
+      return { filename, status: 'failed', error: String(err).slice(0, 200) };
+    }
+  }));
+  return json({ ok: true, results }, {}, origin);
+}
+
+// GET /api/admin/stock/list — list all clips in stock library (auth-gated)
+async function handleAdminStockList(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  const rows = await env.DB.prepare(
+    `SELECT id, filename, scenario, variant, gender, mood, use_for, captions, r2_key, created_at, active, face_swap_needed
+     FROM stock_library ORDER BY created_at DESC LIMIT 500`
+  ).all();
+  return json({ ok: true, clips: rows.results || [] }, {}, origin);
+}
+
+// GET /api/admin/stock/file/:filename — download the MP4 (auth-gated)
+async function handleAdminStockFile(request, env, origin, filename) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  const safeName = filename.replace(/[^A-Za-z0-9_.-]/g, '_');
+  const r2Key = `stock/${safeName}`;
+  const obj = await env.STOCK.get(r2Key);
+  if (!obj) return errResp('not_found', 404, origin);
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'no-cache',
+      ...cors(origin),
+    },
+  });
+}
