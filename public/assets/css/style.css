@@ -53,7 +53,6 @@ img, svg { display: block; max-width: 100%; }
   background: var(--bg);
   height: 100vh;
   height: 100dvh;
-  overflow: hidden;
 }
 
 /* ============ VIDEO HERO ============ */
