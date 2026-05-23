@@ -1,7 +1,8 @@
 // Mainfeed service worker
-// Network-first for HTML (deploys always fresh). SWR for same-origin assets. Bypass API.
+// Network-first for everything same-origin (always fresh on reload).
+// Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v1';
+const CACHE = 'mainfeed-v2';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -23,29 +24,16 @@ self.addEventListener('fetch', (e) => {
   if (url.hostname !== self.location.hostname) return;
   if (url.pathname.startsWith('/api/')) return;
 
-  // Network-first for HTML
-  if (req.headers.get('accept')?.includes('text/html')) {
-    e.respondWith(
-      fetch(req)
-        .then((res) => {
+  // Network-first for ALL same-origin GETs. Cache is offline fallback only.
+  e.respondWith(
+    fetch(req)
+      .then((res) => {
+        if (res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy));
-          return res;
-        })
-        .catch(() => caches.match(req))
-    );
-    return;
-  }
-
-  // Stale-while-revalidate for assets
-  e.respondWith(
-    caches.match(req).then((cached) => {
-      const fetched = fetch(req).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(req, copy));
+        }
         return res;
-      }).catch(() => cached);
-      return cached || fetched;
-    })
+      })
+      .catch(() => caches.match(req))
   );
 });

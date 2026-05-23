@@ -2,11 +2,16 @@ name = "mainfeed-api"
 main = "src/index.js"
 compatibility_date = "2026-05-23"
 
-# D1 binding (set database_id after running: wrangler d1 create mainfeed-db)
+# Custom domain: api.mainfeed.app
+routes = [
+  { pattern = "api.mainfeed.app", custom_domain = true }
+]
+
+# D1
 [[d1_databases]]
 binding = "DB"
 database_name = "mainfeed-db"
-database_id = "PLACEHOLDER_RUN_WRANGLER_D1_CREATE"
+database_id = "5f06a541-3be5-4ffc-9fd5-b56ea239192c"
 
 # R2 buckets
 [[r2_buckets]]
@@ -17,7 +22,7 @@ bucket_name = "mainfeed-content"
 binding = "SELFIES"
 bucket_name = "mainfeed-selfies"
 
-# Secrets (set via `wrangler secret put`):
+# Secrets (set via `wrangler secret put NAME`):
 #   FAL_API_KEY          — Fal.ai image/video generation
 #   PERSONA_API_KEY      — Persona liveness verification
 #   ADMIN_TOKEN          — admin/takedown endpoints
