@@ -1047,6 +1047,16 @@ export default {
     const stockFileMatch = path.match(/^\/api\/admin\/stock\/file\/([A-Za-z0-9_.-]+)$/);
     if (method === 'GET' && stockFileMatch) return handleAdminStockFile(request, env, origin, stockFileMatch[1]);
 
+    // Admin: Pixverse Swap (full-head/person swap) test
+    if (method === 'POST' && path === '/api/admin/swap-fire') return handleAdminSwapFire(request, env, origin);
+    if (method === 'POST' && path === '/api/admin/swap-collect') return handleAdminSwapCollect(request, env, origin);
+
+    // Public: stock files (no auth, so Fal can fetch as video_url input to Pixverse Swap)
+    const publicStockMatch = path.match(/^\/public\/stock\/([A-Za-z0-9_.-]+)$/);
+    if (method === 'GET' && publicStockMatch) return handlePublicStockFile(request, env, origin, publicStockMatch[1]);
+    const publicSwapMatch = path.match(/^\/public\/swap-test\/([A-Za-z0-9_.-]+)$/);
+    if (method === 'GET' && publicSwapMatch) return handlePublicSwapTestFile(request, env, origin, publicSwapMatch[1]);
+
     return errResp('not_found', 404, origin, { path });
   },
 };
@@ -1092,15 +1102,17 @@ async function falVeo31FastQueue(env, prompt, opts = {}) {
   }
   return {
     request_id: requestId,
-    status_url: data.status_url || `https://queue.fal.run/fal-ai/veo3.1/fast/requests/${requestId}/status`,
-    response_url: data.response_url || `https://queue.fal.run/fal-ai/veo3.1/fast/requests/${requestId}`,
+    status_url: data.status_url || `https://queue.fal.run/fal-ai/veo3.1/requests/${requestId}/status`,
+    response_url: data.response_url || `https://queue.fal.run/fal-ai/veo3.1/requests/${requestId}`,
   };
 }
 
 async function falVeo31FastCheckAndCollect(env, requestId) {
   if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
-  const statusUrl = `https://queue.fal.run/fal-ai/veo3.1/fast/requests/${requestId}/status`;
-  const resultUrl = `https://queue.fal.run/fal-ai/veo3.1/fast/requests/${requestId}`;
+  // Veo's queue submit goes to fal-ai/veo3.1/fast but the status/result endpoints
+  // live at fal-ai/veo3.1/requests/... (Fal collapses the /fast variant for status polling).
+  const statusUrl = `https://queue.fal.run/fal-ai/veo3.1/requests/${requestId}/status`;
+  const resultUrl = `https://queue.fal.run/fal-ai/veo3.1/requests/${requestId}`;
 
   const sres = await fetch(statusUrl, {
     headers: { 'Authorization': `Key ${env.FAL_API_KEY}` },
@@ -1407,4 +1419,212 @@ async function handleAdminStockFile(request, env, origin, filename) {
       ...cors(origin),
     },
   });
+}
+
+// GET /public/stock/:filename — PUBLIC (no auth) stock file serving so Fal can fetch as Pixverse Swap input.
+// Filename must include extension (e.g. cop_s09_patrol_shimmy_f.mp4).
+async function handlePublicStockFile(request, env, origin, filename) {
+  const safeName = filename.replace(/[^A-Za-z0-9_.-]/g, '_');
+  const r2Key = `stock/${safeName}`;
+  const obj = await env.STOCK.get(r2Key);
+  if (!obj) return errResp('not_found', 404, origin);
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'public, max-age=3600',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}
+
+// GET /public/swap-test/:filename — PUBLIC swap-test result file serving so user can preview.
+async function handlePublicSwapTestFile(request, env, origin, filename) {
+  const safeName = filename.replace(/[^A-Za-z0-9_.-]/g, '_');
+  const r2Key = `swap-test/${safeName}`;
+  const obj = await env.CONTENT.get(r2Key);
+  if (!obj) return errResp('not_found', 404, origin);
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'public, max-age=3600',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}
+
+// ============ Pixverse Swap (full-head/person swap) ============
+// Uploads source image bytes to Fal storage via 2-step REST flow, returns access_url.
+// https://rest.alpha.fal.ai/storage/auth/token?storage_type=fal-cdn-v3 → token + base_url → POST base_url/files/upload.
+async function falUploadBytes(env, bytes, filename, contentType) {
+  if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
+  const tokenRes = await fetch('https://rest.alpha.fal.ai/storage/auth/token?storage_type=fal-cdn-v3', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${env.FAL_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ file_name: filename, content_type: contentType }),
+  });
+  if (!tokenRes.ok) {
+    const t = await tokenRes.text().catch(() => '');
+    return { error: `token_${tokenRes.status}`, detail: t.slice(0, 400) };
+  }
+  const tokenData = await tokenRes.json().catch(() => null);
+  if (!tokenData?.token || !tokenData?.base_url) {
+    return { error: 'no_token', detail: JSON.stringify(tokenData).slice(0, 400) };
+  }
+  const uploadUrl = tokenData.upload_url || `${tokenData.base_url}/files/upload`;
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${tokenData.token}`,
+      'Content-Type': contentType,
+    },
+    body: bytes,
+  });
+  if (!uploadRes.ok) {
+    const t = await uploadRes.text().catch(() => '');
+    return { error: `upload_${uploadRes.status}`, detail: t.slice(0, 400) };
+  }
+  const uploadData = await uploadRes.json().catch(() => null);
+  const accessUrl = uploadData?.access_url || uploadData?.url || tokenData.file_url;
+  if (!accessUrl) {
+    return { error: 'no_access_url', detail: JSON.stringify(uploadData).slice(0, 400) };
+  }
+  return { access_url: accessUrl };
+}
+
+async function falPixverseSwapQueue(env, sourceImageUrl, targetVideoUrl, opts = {}) {
+  if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
+  const body = {
+    image_url: sourceImageUrl,
+    video_url: targetVideoUrl,
+    mode: opts.mode || 'person',
+    resolution: opts.resolution || '720p',
+  };
+  const res = await fetch('https://queue.fal.run/fal-ai/pixverse/swap', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${env.FAL_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    return { error: `fal_${res.status}`, detail: t.slice(0, 400) };
+  }
+  const data = await res.json().catch(() => null);
+  const requestId = data?.request_id;
+  if (!requestId) return { error: 'no_request_id', detail: JSON.stringify(data).slice(0, 400) };
+  return {
+    request_id: requestId,
+    status_url: data.status_url,
+    response_url: data.response_url,
+  };
+}
+
+async function falPixverseSwapCheckAndCollect(env, requestId) {
+  if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
+  const statusUrl = `https://queue.fal.run/fal-ai/pixverse/requests/${requestId}/status`;
+  const resultUrl = `https://queue.fal.run/fal-ai/pixverse/requests/${requestId}`;
+  const sres = await fetch(statusUrl, { headers: { 'Authorization': `Key ${env.FAL_API_KEY}` } });
+  if (!sres.ok) {
+    const t = await sres.text().catch(() => '');
+    return { error: `status_${sres.status}`, detail: t.slice(0, 400) };
+  }
+  const sdata = await sres.json().catch(() => null);
+  if (sdata?.status === 'FAILED' || sdata?.status === 'ERROR') {
+    return { error: 'fal_failed', detail: JSON.stringify(sdata).slice(0, 400) };
+  }
+  if (sdata?.status !== 'COMPLETED') {
+    return { collected: false, status: sdata?.status || 'UNKNOWN' };
+  }
+  const rres = await fetch(resultUrl, { headers: { 'Authorization': `Key ${env.FAL_API_KEY}` } });
+  if (!rres.ok) {
+    const t = await rres.text().catch(() => '');
+    return { error: `result_${rres.status}`, detail: t.slice(0, 400) };
+  }
+  const rdata = await rres.json().catch(() => null);
+  const videoUrl = rdata?.video?.url;
+  if (!videoUrl) return { error: 'no_video_url', detail: JSON.stringify(rdata).slice(0, 400) };
+  const vres = await fetch(videoUrl);
+  if (!vres.ok) return { error: 'video_download_failed', detail: `status ${vres.status}` };
+  const bytes = new Uint8Array(await vres.arrayBuffer());
+  return { collected: true, bytes, fal_video_url: videoUrl };
+}
+
+// POST /api/admin/swap-fire — fire a Pixverse Swap test
+// Multipart: `face` file + `target_filename` form field (e.g. "cop_s09_patrol_shimmy_f")
+// Returns: { ok, request_id, target_url, source_url, status_url }
+async function handleAdminSwapFire(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  const ctHeader = request.headers.get('Content-Type') || '';
+  let targetFilename = '';
+  let sourceBytes = null;
+  let sourceContentType = 'image/jpeg';
+  if (ctHeader.startsWith('multipart/form-data')) {
+    const form = await request.formData();
+    targetFilename = String(form.get('target_filename') || '').replace(/[^A-Za-z0-9_.-]/g, '_');
+    const face = form.get('face');
+    if (face && typeof face === 'object' && 'arrayBuffer' in face) {
+      sourceBytes = new Uint8Array(await face.arrayBuffer());
+      sourceContentType = face.type || 'image/jpeg';
+    }
+  } else {
+    const body = await request.json().catch(() => ({}));
+    targetFilename = String(body.target_filename || '').replace(/[^A-Za-z0-9_.-]/g, '_');
+    if (body.source_image_base64) {
+      const b64 = String(body.source_image_base64).split(',').pop();
+      const binStr = atob(b64);
+      sourceBytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) sourceBytes[i] = binStr.charCodeAt(i);
+      sourceContentType = body.source_content_type || 'image/jpeg';
+    }
+  }
+  if (!targetFilename) return errResp('missing_target_filename', 400, origin);
+  if (!sourceBytes || sourceBytes.length === 0) return errResp('missing_source_image', 400, origin);
+
+  const upload = await falUploadBytes(env, sourceBytes, 'source_face.jpg', sourceContentType);
+  if (upload.error) return errResp(upload.error, 500, origin, { detail: upload.detail });
+
+  const targetUrl = `https://api.mainfeed.app/public/stock/${targetFilename}.mp4`;
+  const q = await falPixverseSwapQueue(env, upload.access_url, targetUrl, { resolution: '720p' });
+  if (q.error) return errResp(q.error, 500, origin, { detail: q.detail });
+
+  return json({
+    ok: true,
+    request_id: q.request_id,
+    target_url: targetUrl,
+    source_url: upload.access_url,
+    status_url: q.status_url,
+  }, {}, origin);
+}
+
+// POST /api/admin/swap-collect — collect a Pixverse Swap result + save to R2 swap-test/
+// Body: { request_id, out_name }
+// Returns: { ok, status: 'collected'|'pending'|'failed', r2_key?, public_url?, fal_video_url? }
+async function handleAdminSwapCollect(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  const body = await request.json().catch(() => ({}));
+  const requestId = String(body.request_id || '');
+  const outName = String(body.out_name || `swap_${requestId.slice(0, 8)}`).replace(/[^A-Za-z0-9_.-]/g, '_');
+  if (!requestId) return errResp('missing_request_id', 400, origin);
+
+  const c = await falPixverseSwapCheckAndCollect(env, requestId);
+  if (c.error) return errResp(c.error, 500, origin, { detail: c.detail });
+  if (c.collected === false) return json({ ok: true, status: 'pending', fal_status: c.status }, {}, origin);
+
+  const r2Key = `swap-test/${outName}.mp4`;
+  await env.CONTENT.put(r2Key, c.bytes, {
+    httpMetadata: { contentType: 'video/mp4' },
+  });
+  return json({
+    ok: true,
+    status: 'collected',
+    r2_key: r2Key,
+    bytes: c.bytes.length,
+    fal_video_url: c.fal_video_url,
+    public_url: `https://api.mainfeed.app/public/swap-test/${outName}.mp4`,
+  }, {}, origin);
 }
