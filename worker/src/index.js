@@ -1042,6 +1042,7 @@ export default {
     // Admin: stock library batch generation + download
     if (method === 'POST' && path === '/api/admin/batch-gen-stock') return handleAdminBatchGenStock(request, env, origin);
     if (method === 'POST' && path === '/api/admin/stock/collect') return handleAdminStockCollect(request, env, origin);
+    if (method === 'POST' && path === '/api/admin/stock/wipe-scenario') return handleAdminStockWipeScenario(request, env, origin);
     if (method === 'GET' && path === '/api/admin/stock/list') return handleAdminStockList(request, env, origin);
     const stockFileMatch = path.match(/^\/api\/admin\/stock\/file\/([A-Za-z0-9_.-]+)$/);
     if (method === 'GET' && stockFileMatch) return handleAdminStockFile(request, env, origin, stockFileMatch[1]);
@@ -1058,12 +1059,87 @@ function checkAdmin(request, env) {
   return token && env.ADMIN_TOKEN && token === env.ADMIN_TOKEN;
 }
 
+// v4 model (LOCKED 2026-05-24 evening): Veo 3.1 Fast at $0.10/s no-audio @ 1080p 9:16.
+// 6s default = $0.60/clip. Replaces Hunyuan as default. Hunyuan path retained for back-compat
+// and any explicit { model: 'hunyuan' } tasks. Veo handles photoreal + absurd backgrounds
+// much better — required for the "alive + absurd" v4 prompt recipe.
+async function falVeo31FastQueue(env, prompt, opts = {}) {
+  if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
+  const body = {
+    prompt,
+    aspect_ratio: '9:16',
+    resolution: opts.resolution || '1080p',
+    duration: opts.duration || '6s',
+    generate_audio: false,
+    auto_fix: true,
+  };
+  const res = await fetch('https://queue.fal.run/fal-ai/veo3.1/fast', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${env.FAL_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { error: `fal_${res.status}`, detail: text.slice(0, 300) };
+  }
+  const data = await res.json().catch(() => null);
+  const requestId = data?.request_id;
+  if (!requestId) {
+    return { error: 'no_request_id', detail: JSON.stringify(data).slice(0, 300) };
+  }
+  return {
+    request_id: requestId,
+    status_url: data.status_url || `https://queue.fal.run/fal-ai/veo3.1/fast/requests/${requestId}/status`,
+    response_url: data.response_url || `https://queue.fal.run/fal-ai/veo3.1/fast/requests/${requestId}`,
+  };
+}
+
+async function falVeo31FastCheckAndCollect(env, requestId) {
+  if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
+  const statusUrl = `https://queue.fal.run/fal-ai/veo3.1/fast/requests/${requestId}/status`;
+  const resultUrl = `https://queue.fal.run/fal-ai/veo3.1/fast/requests/${requestId}`;
+
+  const sres = await fetch(statusUrl, {
+    headers: { 'Authorization': `Key ${env.FAL_API_KEY}` },
+  });
+  if (!sres.ok) {
+    const text = await sres.text().catch(() => '');
+    return { error: `status_${sres.status}`, detail: text.slice(0, 300) };
+  }
+  const sdata = await sres.json().catch(() => null);
+  if (!sdata) return { error: 'bad_status_json' };
+  if (sdata.status === 'FAILED' || sdata.status === 'ERROR') {
+    return { error: 'fal_failed', detail: JSON.stringify(sdata).slice(0, 300) };
+  }
+  if (sdata.status !== 'COMPLETED') {
+    return { collected: false, status: sdata.status || 'UNKNOWN' };
+  }
+
+  const rres = await fetch(resultUrl, {
+    headers: { 'Authorization': `Key ${env.FAL_API_KEY}` },
+  });
+  if (!rres.ok) {
+    const text = await rres.text().catch(() => '');
+    return { error: `result_${rres.status}`, detail: text.slice(0, 300) };
+  }
+  const rdata = await rres.json().catch(() => null);
+  const videoUrl = rdata?.video?.url;
+  if (!videoUrl) {
+    return { error: 'no_video_url', detail: JSON.stringify(rdata).slice(0, 300) };
+  }
+
+  const vres = await fetch(videoUrl);
+  if (!vres.ok) return { error: 'video_download_failed', detail: `status ${vres.status}` };
+  const bytes = new Uint8Array(await vres.arrayBuffer());
+  return { collected: true, bytes, fal_video_url: videoUrl };
+}
+
 // Queue a Hunyuan video generation request — returns immediately with the Fal queue ticket
-// HARD RULE (user 2026-05-24): only use fal-ai/hunyuan-video-v1.5/text-to-video — this is the $0.07/clip model
-// Do NOT swap to any other Hunyuan variant without explicit user approval — others cost significantly more
-// Architecture note (2026-05-24): Hunyuan video generation takes 60-120s per clip, which exceeds Cloudflare
-// Workers' 30s wall-time limit. So we split into queue (fire-and-return-request-id) + collect (poll-and-fetch)
-// endpoints. sync_mode is NOT honored for video models on queue.fal.run — only for image models.
+// LEGACY (v3 path). Use Veo 3.1 Fast for v4. Hunyuan retained for any in-flight v3 work
+// or explicit { model: 'hunyuan' } overrides.
 async function falHunyuanQueue(env, prompt) {
   if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
   const body = {
@@ -1157,12 +1233,24 @@ async function handleAdminBatchGenStock(request, env, origin) {
   const results = await Promise.all(tasks.map(async (t) => {
     const filename = String(t.filename || '').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 100);
     if (!filename) return { filename: '', status: 'failed', error: 'invalid_filename' };
+    const model = String(t.model || 'veo3.1-fast').trim();
     try {
-      const q = await falHunyuanQueue(env, String(t.prompt || ''));
+      let q;
+      if (model === 'veo3.1-fast') {
+        q = await falVeo31FastQueue(env, String(t.prompt || ''), {
+          duration: t.duration || '6s',
+          resolution: t.resolution || '1080p',
+        });
+      } else if (model === 'hunyuan') {
+        q = await falHunyuanQueue(env, String(t.prompt || ''));
+      } else {
+        return { filename, status: 'failed', error: 'unknown_model', detail: model };
+      }
       if (q.error) return { filename, status: 'failed', error: q.error, detail: q.detail };
       return {
         filename,
         status: 'queued',
+        model,
         request_id: q.request_id,
         status_url: q.status_url,
         response_url: q.response_url,
@@ -1191,6 +1279,7 @@ async function handleAdminStockCollect(request, env, origin) {
   const results = await Promise.all(items.map(async (it) => {
     const filename = String(it.filename || '').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 100);
     const requestId = String(it.request_id || '');
+    const model = String(it.model || 'hunyuan').trim();
     if (!filename || !requestId) return { filename, status: 'failed', error: 'missing_fields' };
 
     // Idempotency: skip if already collected
@@ -1204,7 +1293,17 @@ async function handleAdminStockCollect(request, env, origin) {
     }
 
     try {
-      const c = await falHunyuanCheckAndCollect(env, requestId);
+      let c, width, height, source, duration;
+      if (model === 'veo3.1-fast') {
+        c = await falVeo31FastCheckAndCollect(env, requestId);
+        width = 1080; height = 1920; source = 'fal-veo31-fast';
+        duration = parseFloat(String(it.duration || '6s').replace('s', '')) || 6.0;
+      } else if (model === 'hunyuan') {
+        c = await falHunyuanCheckAndCollect(env, requestId);
+        width = 480; height = 848; source = 'fal-hunyuan'; duration = 5.0;
+      } else {
+        return { filename, status: 'failed', error: 'unknown_model', detail: model };
+      }
       if (c.error) return { filename, status: 'failed', error: c.error, detail: c.detail };
       if (c.collected === false) return { filename, status: 'pending', fal_status: c.status };
 
@@ -1219,11 +1318,11 @@ async function handleAdminStockCollect(request, env, origin) {
            (id, r2_key, type, source, source_id, duration, width, height,
             mood, scenario, composition, tags, face_track_data, active, created_at,
             gender, variant, filename, captions, face_swap_needed, use_for)
-         VALUES (?, ?, 'video', 'fal-hunyuan', ?, 5.0, 480, 848,
+         VALUES (?, ?, 'video', ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, NULL, 1, ?,
                  ?, ?, ?, ?, ?, ?)`
       ).bind(
-        stockId, r2Key, requestId,
+        stockId, r2Key, source, requestId, duration, width, height,
         String(it.mood || ''), String(it.scenario || ''),
         String(it.composition || 'mid'),
         Array.isArray(it.tags) ? it.tags.join(',') : String(it.tags || ''),
@@ -1235,12 +1334,53 @@ async function handleAdminStockCollect(request, env, origin) {
         it.face_swap_needed === false ? 0 : 1,
         Array.isArray(it.use_for) ? it.use_for.join(',') : String(it.use_for || '')
       ).run();
-      return { filename, status: 'collected', stock_id: stockId, r2_key: r2Key, bytes: c.bytes.length };
+      return { filename, status: 'collected', stock_id: stockId, r2_key: r2Key, bytes: c.bytes.length, model };
     } catch (err) {
       return { filename, status: 'failed', error: String(err).slice(0, 200) };
     }
   }));
   return json({ ok: true, results }, {}, origin);
+}
+
+// POST /api/admin/stock/wipe-scenario — wipe all clips for a scenario from D1 + R2 (auth-gated, requires confirm:true)
+// Body: { scenario: 'cop', confirm: true }
+// Returns: { ok, deleted_count, deleted: [filenames] }
+async function handleAdminStockWipeScenario(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+
+  const body = await request.json().catch(() => ({}));
+  const scenario = String(body.scenario || '').trim().slice(0, 64);
+  if (!scenario) return errResp('missing_scenario', 400, origin);
+  if (body.confirm !== true) return errResp('confirm_required', 400, origin);
+
+  let clips = [];
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, r2_key, filename FROM stock_library WHERE scenario = ?`
+    ).bind(scenario).all();
+    clips = rows.results || [];
+  } catch (err) {
+    return errResp('db_query_failed', 500, origin, { detail: String(err).slice(0, 200) });
+  }
+
+  if (clips.length === 0) {
+    return json({ ok: true, deleted_count: 0, deleted: [] }, {}, origin);
+  }
+
+  // Delete from R2 in parallel (best-effort)
+  await Promise.all(clips.map(c => {
+    if (!c.r2_key) return Promise.resolve();
+    return env.STOCK.delete(c.r2_key).catch(() => null);
+  }));
+
+  // Delete from D1
+  try {
+    await env.DB.prepare(`DELETE FROM stock_library WHERE scenario = ?`).bind(scenario).run();
+  } catch (err) {
+    return errResp('db_delete_failed', 500, origin, { detail: String(err).slice(0, 200) });
+  }
+
+  return json({ ok: true, deleted_count: clips.length, deleted: clips.map(c => c.filename) }, {}, origin);
 }
 
 // GET /api/admin/stock/list — list all clips in stock library (auth-gated)
