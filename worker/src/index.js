@@ -1041,6 +1041,7 @@ export default {
 
     // Admin: stock library batch generation + download
     if (method === 'POST' && path === '/api/admin/batch-gen-stock') return handleAdminBatchGenStock(request, env, origin);
+    if (method === 'POST' && path === '/api/admin/stock/collect') return handleAdminStockCollect(request, env, origin);
     if (method === 'GET' && path === '/api/admin/stock/list') return handleAdminStockList(request, env, origin);
     const stockFileMatch = path.match(/^\/api\/admin\/stock\/file\/([A-Za-z0-9_.-]+)$/);
     if (method === 'GET' && stockFileMatch) return handleAdminStockFile(request, env, origin, stockFileMatch[1]);
@@ -1057,17 +1058,19 @@ function checkAdmin(request, env) {
   return token && env.ADMIN_TOKEN && token === env.ADMIN_TOKEN;
 }
 
-// Submit a Hunyuan generation request and return the video bytes
+// Queue a Hunyuan video generation request — returns immediately with the Fal queue ticket
 // HARD RULE (user 2026-05-24): only use fal-ai/hunyuan-video-v1.5/text-to-video — this is the $0.07/clip model
 // Do NOT swap to any other Hunyuan variant without explicit user approval — others cost significantly more
-async function falHunyuanGenerate(env, prompt) {
+// Architecture note (2026-05-24): Hunyuan video generation takes 60-120s per clip, which exceeds Cloudflare
+// Workers' 30s wall-time limit. So we split into queue (fire-and-return-request-id) + collect (poll-and-fetch)
+// endpoints. sync_mode is NOT honored for video models on queue.fal.run — only for image models.
+async function falHunyuanQueue(env, prompt) {
   if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
   const body = {
     prompt,
     aspect_ratio: '9:16',
     resolution: '480p',
     num_frames: 121,        // ~5s at 24fps
-    sync_mode: true,         // block until result ready
     enable_safety_checker: true,
   };
   const res = await fetch('https://queue.fal.run/fal-ai/hunyuan-video-v1.5/text-to-video', {
@@ -1083,20 +1086,66 @@ async function falHunyuanGenerate(env, prompt) {
     return { error: `fal_${res.status}`, detail: text.slice(0, 300) };
   }
   const data = await res.json().catch(() => null);
-  const videoUrl = data?.video?.url || data?.videos?.[0]?.url;
-  if (!videoUrl) {
-    return { error: 'no_video_url', detail: JSON.stringify(data).slice(0, 300) };
+  const requestId = data?.request_id;
+  if (!requestId) {
+    return { error: 'no_request_id', detail: JSON.stringify(data).slice(0, 300) };
   }
-  const videoRes = await fetch(videoUrl);
-  if (!videoRes.ok) {
-    return { error: 'video_download_failed', detail: `status ${videoRes.status}` };
-  }
-  const bytes = new Uint8Array(await videoRes.arrayBuffer());
-  return { bytes, fal_video_url: videoUrl };
+  return {
+    request_id: requestId,
+    status_url: data.status_url || `https://queue.fal.run/fal-ai/hunyuan-video-v1.5/requests/${requestId}/status`,
+    response_url: data.response_url || `https://queue.fal.run/fal-ai/hunyuan-video-v1.5/requests/${requestId}`,
+  };
 }
 
-// POST /api/admin/batch-gen-stock — generate a batch of stock clips in parallel
-// Body: { tasks: [ { filename, scenario, gender, variant, prompt, use_for, captions, mood, face_swap_needed }, ... ] }
+// Check a queued Fal request and, if ready, download the video bytes
+// Returns { collected: true, bytes, fal_video_url } if the clip is ready
+//      or { collected: false, status } if Fal is still processing (caller should retry later)
+//      or { error, detail } if Fal failed the job or auth issue
+async function falHunyuanCheckAndCollect(env, requestId) {
+  if (!env.FAL_API_KEY) return { error: 'no_fal_key' };
+  const statusUrl = `https://queue.fal.run/fal-ai/hunyuan-video-v1.5/requests/${requestId}/status`;
+  const resultUrl = `https://queue.fal.run/fal-ai/hunyuan-video-v1.5/requests/${requestId}`;
+
+  const sres = await fetch(statusUrl, {
+    headers: { 'Authorization': `Key ${env.FAL_API_KEY}` },
+  });
+  if (!sres.ok) {
+    const text = await sres.text().catch(() => '');
+    return { error: `status_${sres.status}`, detail: text.slice(0, 300) };
+  }
+  const sdata = await sres.json().catch(() => null);
+  if (!sdata) return { error: 'bad_status_json' };
+  if (sdata.status === 'FAILED' || sdata.status === 'ERROR') {
+    return { error: 'fal_failed', detail: JSON.stringify(sdata).slice(0, 300) };
+  }
+  if (sdata.status !== 'COMPLETED') {
+    return { collected: false, status: sdata.status || 'UNKNOWN' };
+  }
+
+  const rres = await fetch(resultUrl, {
+    headers: { 'Authorization': `Key ${env.FAL_API_KEY}` },
+  });
+  if (!rres.ok) {
+    const text = await rres.text().catch(() => '');
+    return { error: `result_${rres.status}`, detail: text.slice(0, 300) };
+  }
+  const rdata = await rres.json().catch(() => null);
+  const videoUrl = rdata?.video?.url || rdata?.videos?.[0]?.url;
+  if (!videoUrl) {
+    return { error: 'no_video_url', detail: JSON.stringify(rdata).slice(0, 300) };
+  }
+
+  const vres = await fetch(videoUrl);
+  if (!vres.ok) return { error: 'video_download_failed', detail: `status ${vres.status}` };
+  const bytes = new Uint8Array(await vres.arrayBuffer());
+  return { collected: true, bytes, fal_video_url: videoUrl };
+}
+
+// POST /api/admin/batch-gen-stock — queue a batch of stock clips at Fal in parallel
+// Body: { tasks: [ { filename, scenario, gender, variant, prompt, use_for, captions, mood, face_swap_needed, tags, composition }, ... ] }
+// Returns: { ok, results: [{ filename, status: 'queued'|'failed', request_id?, status_url?, response_url?, error?, detail? }] }
+// Caller MUST follow up with POST /api/admin/stock/collect (passing back the same metadata + request_ids
+// from this response) to actually collect the videos once Fal finishes processing (~60-120s per clip).
 async function handleAdminBatchGenStock(request, env, origin) {
   if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
 
@@ -1109,12 +1158,58 @@ async function handleAdminBatchGenStock(request, env, origin) {
     const filename = String(t.filename || '').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 100);
     if (!filename) return { filename: '', status: 'failed', error: 'invalid_filename' };
     try {
-      const gen = await falHunyuanGenerate(env, String(t.prompt || ''));
-      if (gen.error) {
-        return { filename, status: 'failed', error: gen.error, detail: gen.detail };
-      }
+      const q = await falHunyuanQueue(env, String(t.prompt || ''));
+      if (q.error) return { filename, status: 'failed', error: q.error, detail: q.detail };
+      return {
+        filename,
+        status: 'queued',
+        request_id: q.request_id,
+        status_url: q.status_url,
+        response_url: q.response_url,
+      };
+    } catch (err) {
+      return { filename, status: 'failed', error: String(err).slice(0, 200) };
+    }
+  }));
+  return json({ ok: true, results }, {}, origin);
+}
+
+// POST /api/admin/stock/collect — collect READY Fal video requests + persist to R2 + D1
+// Body: { items: [{ request_id, filename, scenario, gender, variant, use_for, captions, mood, face_swap_needed, tags, composition }, ...] }
+// For each item: checks Fal status; if COMPLETED, downloads + R2 put + DB insert.
+// Idempotent — items with `filename` already in stock_library are skipped with status 'already_collected'.
+// Returns: { ok, results: [{ filename, status: 'collected'|'pending'|'already_collected'|'failed', ... }] }
+// Caller should loop calling this every ~15-30s until all items are no longer 'pending'.
+async function handleAdminStockCollect(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+
+  const body = await request.json().catch(() => ({}));
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (items.length === 0) return errResp('empty', 400, origin);
+  if (items.length > 50) return errResp('batch_too_large', 400, origin);
+
+  const results = await Promise.all(items.map(async (it) => {
+    const filename = String(it.filename || '').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 100);
+    const requestId = String(it.request_id || '');
+    if (!filename || !requestId) return { filename, status: 'failed', error: 'missing_fields' };
+
+    // Idempotency: skip if already collected
+    try {
+      const existing = await env.DB.prepare(
+        `SELECT id FROM stock_library WHERE filename = ? LIMIT 1`
+      ).bind(filename).first();
+      if (existing) return { filename, status: 'already_collected', stock_id: existing.id };
+    } catch (err) {
+      // best-effort; continue
+    }
+
+    try {
+      const c = await falHunyuanCheckAndCollect(env, requestId);
+      if (c.error) return { filename, status: 'failed', error: c.error, detail: c.detail };
+      if (c.collected === false) return { filename, status: 'pending', fal_status: c.status };
+
       const r2Key = `stock/${filename}.mp4`;
-      await env.STOCK.put(r2Key, gen.bytes, {
+      await env.STOCK.put(r2Key, c.bytes, {
         httpMetadata: { contentType: 'video/mp4' },
       });
       const stockId = uid();
@@ -1128,19 +1223,19 @@ async function handleAdminBatchGenStock(request, env, origin) {
                  ?, ?, ?, ?, NULL, 1, ?,
                  ?, ?, ?, ?, ?, ?)`
       ).bind(
-        stockId, r2Key, filename,
-        String(t.mood || ''), String(t.scenario || ''),
-        String(t.composition || 'mid'),
-        Array.isArray(t.tags) ? t.tags.join(',') : String(t.tags || ''),
+        stockId, r2Key, requestId,
+        String(it.mood || ''), String(it.scenario || ''),
+        String(it.composition || 'mid'),
+        Array.isArray(it.tags) ? it.tags.join(',') : String(it.tags || ''),
         ts,
-        String(t.gender || 'unisex'),
-        Number(t.variant || 1),
+        String(it.gender || 'unisex'),
+        Number(it.variant || 1),
         filename,
-        Array.isArray(t.captions) ? t.captions.join('|') : String(t.captions || ''),
-        t.face_swap_needed === false ? 0 : 1,
-        Array.isArray(t.use_for) ? t.use_for.join(',') : String(t.use_for || '')
+        Array.isArray(it.captions) ? it.captions.join('|') : String(it.captions || ''),
+        it.face_swap_needed === false ? 0 : 1,
+        Array.isArray(it.use_for) ? it.use_for.join(',') : String(it.use_for || '')
       ).run();
-      return { filename, status: 'ok', stock_id: stockId, r2_key: r2Key, bytes: gen.bytes.length };
+      return { filename, status: 'collected', stock_id: stockId, r2_key: r2Key, bytes: c.bytes.length };
     } catch (err) {
       return { filename, status: 'failed', error: String(err).slice(0, 200) };
     }
