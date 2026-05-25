@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=14" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=14" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=15" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=15" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=14" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=14" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=15" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=15" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -134,7 +134,6 @@
             <span class="mf-red-dot"></span> Start recording
           </button>
           <button type="button" class="mf-link-retake" id="mf-video-retake" hidden>Re-record</button>
-          <input type="file" id="mf-video-fallback" accept="video/*" capture="user" hidden />
         </div>
 
         <p class="mf-busy" id="mf-busy-3" hidden>Checking for a face…</p>
@@ -371,7 +370,9 @@
     const recordBtn = document.getElementById('mf-video-record-btn');
     const videoRetakeBtn = document.getElementById('mf-video-retake');
     const videoStage = document.getElementById('mf-video-stage');
-    const videoFallback = document.getElementById('mf-video-fallback');
+    // (Native-camera fallback removed — it silently bypassed our 10-sec limit
+    // and live face-check. If getUserMedia fails the user now sees an actionable
+    // error message instead.)
 
     const REC_DURATION_SEC = 10;
     let recStream = null;
@@ -470,15 +471,36 @@
 
     async function openRecorderFlow() {
       clearErr(3);
+
+      // Pre-check permission state when supported — gives a clearer error than
+      // letting getUserMedia throw a generic NotAllowedError.
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const p = await navigator.permissions.query({ name: 'camera' });
+          if (p.state === 'denied') {
+            return showErr(3, 'Camera is blocked for this site. Tap the address bar (or lock icon) → Site settings → Camera → Allow, then tap Start recording again.');
+          }
+        } catch (_) { /* not all browsers support camera permission query — ignore */ }
+      }
+
       try {
         recStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 } },
           audio: false,
         });
       } catch (err) {
-        // Camera blocked → fall back to OS camera app (still validates duration + face on result)
-        videoFallback.click();
-        return;
+        const name = (err && err.name) || 'unknown';
+        let msg;
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          msg = 'Camera permission denied. Tap the address bar (or lock icon) → Site settings → Camera → Allow, then tap Start recording again.';
+        } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+          msg = 'No front camera detected on this device.';
+        } else if (name === 'NotReadableError') {
+          msg = 'Camera is in use by another app. Close camera apps and try again.';
+        } else {
+          msg = `Camera unavailable (${name}). Make sure this site has camera permission, then try again.`;
+        }
+        return showErr(3, msg);
       }
       recVideo.srcObject = recStream;
       try { await recVideo.play(); } catch (_) {}
@@ -543,25 +565,6 @@
     }
     recordBtn.addEventListener('click', openRecorderFlow);
 
-    // Native-camera fallback (only used when getUserMedia is blocked)
-    videoFallback.addEventListener('change', () => {
-      const f = videoFallback.files && videoFallback.files[0];
-      videoFallback.value = '';
-      if (!f) return;
-      if (!f.type.startsWith('video/')) return showErr(3, 'That file is not a video.');
-      const probe = document.createElement('video');
-      probe.src = URL.createObjectURL(f);
-      probe.preload = 'metadata';
-      probe.muted = true;
-      probe.playsInline = true;
-      probe.addEventListener('loadedmetadata', () => {
-        const dur = probe.duration;
-        if (!isFinite(dur) || dur < 5) return showErr(3, `Too short (${dur.toFixed(1)}s). Record about 10 seconds.`);
-        if (dur > 20) return showErr(3, `Too long (${dur.toFixed(1)}s). Keep it under 20 seconds.`);
-        setVideoCaptured(f);  // facesAlreadyChecked=false → goes through blob-analysis fallback
-      });
-      probe.addEventListener('error', () => showErr(3, "Couldn't read that video. Try again."));
-    });
 
     // ============ Step validation + submit ============
     document.querySelector('[data-action="next-1"]').addEventListener('click', () => {
