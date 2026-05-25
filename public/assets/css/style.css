@@ -2032,6 +2032,45 @@ img, svg { display: block; max-width: 100%; }
   font-weight: 600;
   font-size: 14px;
 }
+.mf-cam-blocked {
+  background: rgba(250, 204, 21, 0.08);
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin: 8px 0 16px;
+  color: #fde68a;
+}
+.mf-cam-blocked-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #fcd34d;
+}
+.mf-cam-blocked-body {
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 12px;
+  color: #fef3c7;
+}
+.mf-cam-blocked ol {
+  margin: 0 0 14px;
+  padding-left: 22px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #fef3c7;
+}
+.mf-cam-blocked ol li {
+  margin-bottom: 6px;
+}
+.mf-cam-blocked ol li b {
+  color: #ffffff;
+  font-weight: 700;
+}
+#mf-cam-retry {
+  background: #fcd34d;
+  color: #1a1a1a;
+  font-weight: 700;
+}
 .mf-selfie-stage,
 .mf-video-stage {
   display: flex;

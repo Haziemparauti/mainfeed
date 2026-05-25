@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v4';  // bump 2026-05-25 → signup v17 (remove device-camera fallback, in-app recorder only)
+const CACHE = 'mainfeed-v5';  // bump 2026-05-25 → signup v18 (eager camera probe + visible unblock banner)
 
 self.addEventListener('install', () => {
   self.skipWaiting();

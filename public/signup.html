@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=17" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=17" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=18" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=18" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=17" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=17" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=18" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=18" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -126,6 +126,15 @@
         <h1>10-second video of you</h1>
         <p class="mf-sub">Slowly turn your head left and right. Auto-stops at 10 seconds.</p>
 
+        <p class="mf-busy" id="mf-cam-help" hidden></p>
+
+        <div class="mf-cam-blocked" id="mf-cam-blocked" hidden>
+          <div class="mf-cam-blocked-title">⚠️ Camera blocked for this site</div>
+          <p class="mf-cam-blocked-body">Mainfeed needs your camera to record the 10-second video. Chrome won't ask again because you (or someone) previously blocked it. Unblock it now:</p>
+          <ol id="mf-cam-blocked-steps"></ol>
+          <button type="button" class="mf-cta mf-cta-block" id="mf-cam-retry">Try again</button>
+        </div>
+
         <div class="mf-video-card">
           <div class="mf-video-stage" id="mf-video-stage">
             <span class="mf-stage-icon">🎥</span>
@@ -195,6 +204,10 @@
       progress.dataset.step = String(step);
       if (pushHistory) history.pushState({ step }, '', `#step-${step}`);
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Eagerly probe camera permission as soon as we land on step 3 so the
+      // user sees Chrome's permission prompt right away — not when they tap
+      // Start recording, by which point a previous denial silently blocks it.
+      if (step === 3 && !captured.liveness_video) probeCameraPermission();
     }
     const hashStep = parseInt((location.hash.match(/^#step-(\d+)/) || [])[1] || '1', 10);
     showStep(Math.max(1, Math.min(STEPS, hashStep)), false);
@@ -416,21 +429,10 @@
 
     async function openRecorderFlow() {
       clearErr(3);
-
-      // Detect PWA (standalone) vs regular browser tab — error message differs.
-      const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
-      const pwaFix = isStandalone
-        ? 'Long-press the Mainfeed app icon on your home screen → App info → Permissions → Camera → Allow.'
-        : 'Tap the lock icon in the address bar → Permissions → Camera → Allow, then tap Start recording again.';
-
-      if (navigator.permissions && navigator.permissions.query) {
-        try {
-          const p = await navigator.permissions.query({ name: 'camera' });
-          if (p.state === 'denied') {
-            return showErr(3, 'Camera is blocked for this site. ' + pwaFix);
-          }
-        } catch (_) { /* not all browsers support camera permission query — ignore */ }
-      }
+      // Hide the "Camera ready" hint — we're moving past it now.
+      const helpEl = document.getElementById('mf-cam-help');
+      helpEl.hidden = true;
+      helpEl.classList.remove('mf-busy--ok');
 
       try {
         recStream = await navigator.mediaDevices.getUserMedia({
@@ -438,18 +440,20 @@
           audio: false,
         });
       } catch (err) {
+        // If we got here the upfront probe should have already caught a denial,
+        // but handle the edge case (user revoked permission between step entry
+        // and Start recording tap).
         const name = (err && err.name) || 'unknown';
-        let msg;
         if (name === 'NotAllowedError' || name === 'SecurityError') {
-          msg = 'Camera permission denied. ' + pwaFix;
+          showBlockedBanner();
         } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-          msg = 'No front camera detected on this device.';
+          showErr(3, 'No front camera detected on this device.');
         } else if (name === 'NotReadableError') {
-          msg = 'Camera is in use by another app. Close camera apps and try again.';
+          showErr(3, 'Camera is in use by another app. Close camera apps and try again.');
         } else {
-          msg = `Camera unavailable (${name}). Reload and try again.`;
+          showErr(3, `Camera unavailable (${name}). Reload and try again.`);
         }
-        return showErr(3, msg);
+        return;
       }
       recVideo.srcObject = recStream;
       try { await recVideo.play(); } catch (_) {}
@@ -513,6 +517,86 @@
       }, 1000);
     }
     recordBtn.addEventListener('click', openRecorderFlow);
+
+    // ============ Eager camera permission probe on step 3 entry ============
+    // Trigger Chrome's permission popup the moment user lands on step 3 (not
+    // when they tap Start recording). If the popup never shows it's because
+    // the site was previously blocked — we then display a big banner with
+    // exact unblock instructions for mobile Chrome.
+    async function probeCameraPermission() {
+      const blockedEl = document.getElementById('mf-cam-blocked');
+      const busyEl = document.getElementById('mf-busy-3');
+      const helpEl = document.getElementById('mf-cam-help');
+      blockedEl.hidden = true;
+      helpEl.hidden = false;
+      helpEl.textContent = 'Checking camera…';
+      helpEl.classList.remove('mf-busy--ok');
+      clearErr(3);
+
+      // If permissions API says "denied", skip getUserMedia (it would also
+      // throw silently) and jump straight to the unblock banner.
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const p = await navigator.permissions.query({ name: 'camera' });
+          if (p.state === 'denied') {
+            helpEl.hidden = true;
+            showBlockedBanner();
+            return;
+          }
+        } catch (_) { /* permissions API not supported here — fall through */ }
+      }
+
+      try {
+        const probe = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false,
+        });
+        // Permission granted — stop probe stream, we'll open a fresh one when
+        // user taps Start recording.
+        probe.getTracks().forEach((t) => t.stop());
+        helpEl.hidden = false;
+        helpEl.classList.add('mf-busy--ok');
+        helpEl.textContent = '✓ Camera ready — tap Start recording';
+      } catch (err) {
+        helpEl.hidden = true;
+        const name = (err && err.name) || 'unknown';
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          showBlockedBanner();
+        } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+          showErr(3, 'No front camera detected on this device.');
+        } else if (name === 'NotReadableError') {
+          showErr(3, 'Camera is in use by another app. Close other camera apps and reload.');
+        } else {
+          showErr(3, `Camera unavailable (${name}). Reload and try again.`);
+        }
+      }
+    }
+
+    function showBlockedBanner() {
+      const blockedEl = document.getElementById('mf-cam-blocked');
+      const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+      const stepsEl = document.getElementById('mf-cam-blocked-steps');
+      if (isStandalone) {
+        stepsEl.innerHTML = `
+          <li>Open <b>mainfeed.app</b> in <b>Chrome</b> (not this installed app)</li>
+          <li>Tap the <b>🔒 lock icon</b> at the LEFT of the address bar</li>
+          <li>Tap <b>Permissions</b> → <b>Camera</b> → <b>Allow</b></li>
+          <li>Reload, complete signup, then re-install the app from <b>Add to home screen</b></li>`;
+      } else {
+        stepsEl.innerHTML = `
+          <li>Tap the <b>🔒 lock icon</b> (or <b>ⓘ tune icon</b>) at the LEFT of the address bar above</li>
+          <li>Tap <b>Permissions</b> → <b>Camera</b></li>
+          <li>Change <b>Block</b> → <b>Allow</b></li>
+          <li>Then tap the <b>Try again</b> button below</li>`;
+      }
+      blockedEl.hidden = false;
+    }
+
+    document.getElementById('mf-cam-retry').addEventListener('click', () => {
+      // Tries the probe again. If they actually unblocked in site settings,
+      // this will succeed and flip back to "Camera ready".
+      probeCameraPermission();
+    });
 
     // ============ Step validation + submit ============
     document.querySelector('[data-action="next-1"]').addEventListener('click', () => {
