@@ -33,23 +33,22 @@ import cairosvg
 # ============ config (tweak to retune layout) ============
 
 # Anton = display font for the meme CAPTION (bold condensed, classic meme).
-# Simplex Sans = clean geometric display sans for the WATERMARK pill. SIL OFL.
-# Single Regular weight (no Bold ship). Designed for display sizes; safe at
-# our supersampled render (3× → effective 39px, downsampled to 13px final).
+# DejaVu Sans Bold = clean bold sans for the WATERMARK. Pre-installed on
+# the Ubuntu base via fonts-dejavu-core. Genuinely bold (no thin glyphs),
+# very legible at small sizes, Bitstream Vera license (commercial OK).
 CAPTION_FONT_PATH = "/app/assets/Anton.ttf"
-WATERMARK_FONT_PATH = "/app/assets/SimplexSans-Regular.ttf"
+WATERMARK_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-# Watermark layout — small sharp chip with gradient border (top-center).
-# Supersampling factor: render at 3× target size then LANCZOS-downsample
-# for crisp small text (Pillow renders < 20px text poorly at native).
+# Watermark layout — slightly bigger pill, bold DejaVu Sans text. Sizes
+# bumped ~30% from the previous Simplex Sans pass for better legibility.
 WATERMARK_Y_PCT = 0.10
-WATERMARK_LOGO_PCT = 0.022   # logo height as fraction of video height
-WATERMARK_TEXT_PCT = 0.016   # watermark text height as fraction of video height
-WATERMARK_PILL_HORIZONTAL_PAD_PX = 6
-WATERMARK_PILL_VERTICAL_PAD_PX = 3
-WATERMARK_PILL_GAP_PX = 5
+WATERMARK_LOGO_PCT = 0.026   # was 0.022 (Simplex), backed off from 0.028
+WATERMARK_TEXT_PCT = 0.018   # was 0.016 (Simplex), DejaVu Bold is naturally wider
+WATERMARK_PILL_HORIZONTAL_PAD_PX = 7
+WATERMARK_PILL_VERTICAL_PAD_PX = 4
+WATERMARK_PILL_GAP_PX = 6
 WATERMARK_PILL_BORDER_PX = 1
-WATERMARK_PILL_RADIUS_PX = 6         # fixed corner radius (was: pill_h/2 = stadium)
+WATERMARK_PILL_RADIUS_PX = 7
 WATERMARK_PILL_BG = (0, 0, 0, 175)
 WATERMARK_SUPERSAMPLE = 4            # render at N× then LANCZOS-downsample for AA
 
