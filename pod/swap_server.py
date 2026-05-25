@@ -67,13 +67,16 @@ DREAMIDV_FASTER_CKPT = WEIGHTS_DIR / "dreamidv_faster.pth"
 WAN21_DIR = WEIGHTS_DIR / "wan2.1"
 DWPOSE_DIR = DREAMIDV_DIR / "pose" / "models"
 
-# R2 (Cloudflare S3-compatible) — for uploading swap outputs.
+# R2 (Cloudflare S3-compatible) — for uploading swap outputs + (optionally) pulling weights.
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "1107173d768105bad60ebb40ff28ef3d")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET = os.environ.get("R2_BUCKET", "mainfeed-content")
 R2_OUTPUT_PREFIX = os.environ.get("R2_OUTPUT_PREFIX", "generated/").rstrip("/") + "/"
+R2_WEIGHTS_PREFIX = os.environ.get("R2_WEIGHTS_PREFIX", "models/").rstrip("/") + "/"
 R2_ENABLED = bool(R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY)
+# If set + R2 is configured, ensure_weights pulls from R2 mirror instead of HuggingFace.
+HARDEN_WEIGHTS_R2 = os.environ.get("HARDEN_WEIGHTS_R2", "0") == "1"
 
 
 # ============ state ============
@@ -130,56 +133,102 @@ class SwapRequest(BaseModel):
 
 # ============ weight download (HF) ============
 
-def ensure_weights() -> None:
-    """Download missing weights into WEIGHTS_DIR + DREAMIDV_DIR/pose/models."""
-    from huggingface_hub import hf_hub_download, snapshot_download
+# Weight manifest — used by both R2 and HF paths.
+# Each entry: (local_path, r2_key, hf_repo_or_None, hf_filename_or_None)
+# Entries with hf_repo=None are pulled by snapshot_download (Wan-2.1 bundle).
+def _weight_manifest():
+    return [
+        (DREAMIDV_FASTER_CKPT,
+         f"{R2_WEIGHTS_PREFIX}dreamidv_faster.pth",
+         "XuGuo699/DreamID-V", "dreamidv_faster.pth"),
+        (DWPOSE_DIR / "dw-ll_ucoco_384.onnx",
+         f"{R2_WEIGHTS_PREFIX}dwpose/dw-ll_ucoco_384.onnx",
+         "XuGuo699/DreamID-V", "dw-ll_ucoco_384.onnx"),
+        (DWPOSE_DIR / "yolox_l.onnx",
+         f"{R2_WEIGHTS_PREFIX}dwpose/yolox_l.onnx",
+         "XuGuo699/DreamID-V", "yolox_l.onnx"),
+        (WAN21_DIR / "Wan2.1_VAE.pth",
+         f"{R2_WEIGHTS_PREFIX}wan2.1/Wan2.1_VAE.pth",
+         None, None),
+        (WAN21_DIR / "models_t5_umt5-xxl-enc-bf16.pth",
+         f"{R2_WEIGHTS_PREFIX}wan2.1/models_t5_umt5-xxl-enc-bf16.pth",
+         None, None),
+        (WAN21_DIR / "diffusion_pytorch_model.safetensors",
+         f"{R2_WEIGHTS_PREFIX}wan2.1/diffusion_pytorch_model.safetensors",
+         None, None),
+    ]
 
+
+def _exists_and_nonempty(p: Path, min_bytes: int = 1_000_000) -> bool:
+    try:
+        return p.exists() and p.stat().st_size >= min_bytes
+    except OSError:
+        return False
+
+
+def _r2_download(s3, key: str, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    s3.download_file(Bucket=R2_BUCKET, Key=key, Filename=str(dst))
+
+
+def ensure_weights() -> None:
+    """Materialize all required weight files under WEIGHTS_DIR + DREAMIDV_DIR/pose/models.
+
+    Source selection:
+      - HARDEN_WEIGHTS_R2=1 + R2 creds set  →  pull from R2 mirror (mainfeed-content/models/...)
+      - otherwise                            →  pull from HuggingFace
+    """
     WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
     WAN21_DIR.mkdir(parents=True, exist_ok=True)
     DWPOSE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 1) DreamID-V faster checkpoint
-    if not DREAMIDV_FASTER_CKPT.exists() or DREAMIDV_FASTER_CKPT.stat().st_size < 1_000_000:
-        print("[ensure_weights] dreamidv_faster.pth", flush=True)
-        hf_hub_download(
-            repo_id="XuGuo699/DreamID-V",
-            filename="dreamidv_faster.pth",
-            local_dir=str(WEIGHTS_DIR),
-            local_dir_use_symlinks=False,
-            token=HF_TOKEN,
-        )
+    manifest = _weight_manifest()
+    missing = [m for m in manifest if not _exists_and_nonempty(m[0])]
+    if not missing:
+        print("[ensure_weights] all weights present", flush=True)
+        return
 
-    # 2) DWPose onnx models (placed inside repo dir, where DreamID-V looks)
-    for fname in ("dw-ll_ucoco_384.onnx", "yolox_l.onnx"):
-        dst = DWPOSE_DIR / fname
-        if not dst.exists() or dst.stat().st_size < 1_000_000:
-            print(f"[ensure_weights] {fname}", flush=True)
+    use_r2 = HARDEN_WEIGHTS_R2 and R2_ENABLED
+    if use_r2:
+        s3 = build_r2_client()
+        print(f"[ensure_weights] R2 mirror — fetching {len(missing)} files from "
+              f"r2://{R2_BUCKET}/{R2_WEIGHTS_PREFIX}", flush=True)
+        for local, r2_key, _, _ in missing:
+            print(f"  GET {r2_key}", flush=True)
+            t = time.time()
+            _r2_download(s3, r2_key, local)
+            sz = local.stat().st_size
+            el = time.time() - t
+            print(f"      ok {sz/1e6:.0f} MB in {el:.1f}s ({(sz/1e6)/max(el,0.001):.0f} MB/s)", flush=True)
+        print("[ensure_weights] all weights present (from R2)", flush=True)
+        return
+
+    # Fallback / default: HuggingFace
+    from huggingface_hub import hf_hub_download, snapshot_download
+    print(f"[ensure_weights] HuggingFace — fetching {len(missing)} files "
+          "(set HARDEN_WEIGHTS_R2=1 + R2 creds to use our R2 mirror)", flush=True)
+
+    # Individual hf_hub_downloads for files with explicit hf_repo
+    for local, _, hf_repo, hf_filename in missing:
+        if hf_repo and not _exists_and_nonempty(local):
+            print(f"  hf_hub_download {hf_repo}:{hf_filename}", flush=True)
             hf_hub_download(
-                repo_id="XuGuo699/DreamID-V",
-                filename=fname,
-                local_dir=str(DWPOSE_DIR),
-                local_dir_use_symlinks=False,
-                token=HF_TOKEN,
+                repo_id=hf_repo, filename=hf_filename,
+                local_dir=str(local.parent), token=HF_TOKEN,
             )
 
-    # 3) Wan-2.1-T2V-1.3B base model (the *.pth, *.safetensors, config.json + google/ tokenizer)
-    sentinel = WAN21_DIR / "models_t5_umt5-xxl-enc-bf16.pth"
-    if not sentinel.exists() or sentinel.stat().st_size < 1_000_000_000:
-        print("[ensure_weights] Wan-2.1-T2V-1.3B (snapshot, only required files)", flush=True)
+    # Wan-2.1 bundle via snapshot_download (only if any wan2.1 file is still missing)
+    wan_missing = [m for m in missing if m[2] is None and not _exists_and_nonempty(m[0])]
+    if wan_missing:
+        print("  snapshot_download Wan-AI/Wan2.1-T2V-1.3B (allow_patterns)", flush=True)
         snapshot_download(
             repo_id="Wan-AI/Wan2.1-T2V-1.3B",
             local_dir=str(WAN21_DIR),
-            local_dir_use_symlinks=False,
-            allow_patterns=[
-                "*.pth",
-                "*.safetensors",
-                "config.json",
-                "google/**",
-            ],
+            allow_patterns=["*.pth", "*.safetensors", "config.json", "google/**"],
             token=HF_TOKEN,
         )
 
-    print("[ensure_weights] all weights present", flush=True)
+    print("[ensure_weights] all weights present (from HuggingFace)", flush=True)
 
 
 # ============ helpers ============
