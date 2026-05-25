@@ -144,16 +144,14 @@ function pieceCard(p) {
     : `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`;
   const pubText = p.public ? 'Unpublish' : 'Publish';
   const pubClass = p.public ? 'mf-piece-action mf-piece-action--active' : 'mf-piece-action';
-  const handle = escapeHtml(currentUser?.handle || '');
+  // Caption + watermark are BURNED INTO the video by the pod (see
+  // pod/render_overlay.py). No HTML overlays — what you see in-feed is
+  // exactly what you get when you download or share. data-caption is kept
+  // for the image-only canvas-baking path below.
   return `
     <article class="mf-piece" data-id="${p.id}" data-caption="${escapeHtml(caption)}" data-url="${API}${p.file_url}" data-public="${p.public ? '1' : '0'}">
       <div class="mf-piece-stage">
         ${mediaTag}
-        ${caption ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(caption)}</div>` : ''}
-        <div class="mf-piece-watermark">
-          <img class="mf-piece-watermark-logo" src="/assets/img/logo-square2.svg" alt="" />
-          <span class="mf-piece-watermark-text">Mainfeed.app · @${handle}</span>
-        </div>
       </div>
       <div class="mf-piece-actions">
         <button class="mf-piece-action" data-piece-action="download" data-id="${p.id}">Download</button>

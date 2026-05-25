@@ -51,8 +51,19 @@ RUN pip uninstall -y onnxruntime onnxruntime-gpu 2>/dev/null || true \
 
 RUN pip install --no-cache-dir fastapi 'uvicorn[standard]' httpx boto3 huggingface_hub
 
+# === Post-swap branding (caption + watermark burn-in via Pillow + FFmpeg) ===
+# Pillow renders the overlay PNG; FFmpeg composites it onto every frame.
+RUN pip install --no-cache-dir Pillow
+
+# Anton (SIL OFL) — bold condensed, ideal for meme captions. Bundled
+# in-image so the burn-in step has no external font fetch at runtime.
+RUN mkdir -p /app/assets && \
+    wget -q -O /app/assets/Anton.ttf \
+      https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf
+
 # === Server code ===
 COPY swap_server.py /root/swap_server.py
+COPY render_overlay.py /root/render_overlay.py
 COPY precompute_pose.py /root/precompute_pose.py
 
 # === Workspace for weights + temp inference files (mounted as volume in prod) ===

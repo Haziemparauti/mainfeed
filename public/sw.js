@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v10';  // bump 2026-05-25 → app v10 (full-bleed feed, fixed transparent header, logo watermark bar, share+download verify gate) + signup v23 (no red card, real video preload)
+const CACHE = 'mainfeed-v11';  // bump 2026-05-25 → app v11 (HTML overlays REMOVED — caption + watermark are now burned into the video by the pod)
 
 self.addEventListener('install', () => {
   self.skipWaiting();

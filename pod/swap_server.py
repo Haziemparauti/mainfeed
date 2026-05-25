@@ -53,6 +53,8 @@ from botocore.client import Config as BotoConfig
 from fastapi import FastAPI, Header, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
+from render_overlay import brand_video
+
 
 # ============ config ============
 
@@ -129,6 +131,10 @@ class SwapRequest(BaseModel):
     size: str = "832*480"   # DreamID-V uses asterisk-separated W*H
     base_seed: int = 42
     frame_num: Optional[int] = None  # default determined by DreamID-V if None
+    # Caption + user handle drive the post-swap burn-in step. If both are
+    # null the burn-in is a no-op and the raw swap output is uploaded.
+    caption: Optional[str] = None
+    handle: Optional[str] = None
 
 
 # ============ weight download (HF) ============
@@ -338,6 +344,25 @@ async def run_swap(req: SwapRequest) -> None:
                 req.sample_steps, req.sample_guide_scale_img,
                 req.size, req.base_seed, req.frame_num,
             )
+
+        # Burn caption + watermark into the video frames so the file you
+        # download from your feed and upload to TikTok/IG carries the brand.
+        # No-op if neither caption nor handle was provided.
+        burn_started = time.time()
+        try:
+            branded = await asyncio.get_event_loop().run_in_executor(
+                None, brand_video, output, workdir, req.handle, req.caption,
+            )
+            if branded != output:
+                burn_elapsed = round(time.time() - burn_started, 2)
+                print(f"[swap_server] {req.request_id} burn-in OK in {burn_elapsed}s "
+                      f"({branded.stat().st_size} bytes)", flush=True)
+                output = branded
+        except Exception as burn_err:
+            # Failure here is non-fatal — fall back to the un-branded swap so
+            # the user still sees their video. Log it loudly so we can fix.
+            print(f"[swap_server] {req.request_id} burn-in FAILED, uploading raw swap: {burn_err}",
+                  flush=True)
 
         # Upload output mp4 to R2 (this is the canonical delivery surface).
         r2_meta = None

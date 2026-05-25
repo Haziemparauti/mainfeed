@@ -1052,6 +1052,9 @@ async function generateWelcomeVideoSwap(env, userId, handle, gender, primarySelf
   ).bind(pieceId, userId, caption, r2Key, ts, stock.scenario || null, stock.id).run();
 
   // Fire pod swap. request_id = pieceId so the callback finds the row directly.
+  // caption + handle are sent so the pod burns them into the video frames —
+  // see pod/render_overlay.py. Without these, downloaded clips would lose
+  // all branding when re-shared to TikTok/IG.
   const payload = {
     request_id: pieceId,
     source_image_url: sourceImageUrlFlat,
@@ -1061,6 +1064,8 @@ async function generateWelcomeVideoSwap(env, userId, handle, gender, primarySelf
     sample_steps: 16,
     sample_guide_scale_img: 4.0,
     size: '832*480',
+    caption,
+    handle,
   };
 
   const podSwapUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';
@@ -1839,6 +1844,10 @@ async function handleAdminSwapQueue(request, env, origin) {
       ? Number(body.sample_guide_scale_img) : 4.0,
     // DreamID-V argparse only accepts 832*480 / 480*832 / 720*1280 / 1280*720 / 1024*1024 (asterisk-separated).
     size: typeof body.size === 'string' ? body.size : '832*480',
+    // Pod burns these into the video (caption top + watermark bar) per
+    // pod/render_overlay.py. Optional — omit them in admin tests to skip burn-in.
+    caption: typeof body.caption === 'string' ? body.caption : null,
+    handle: typeof body.handle === 'string' ? body.handle : null,
   };
 
   const podUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';
