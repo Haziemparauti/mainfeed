@@ -33,11 +33,11 @@ import cairosvg
 # ============ config (tweak to retune layout) ============
 
 # Anton = display font for the meme CAPTION (bold condensed, classic meme).
-# DejaVu Sans Bold = clean sans-serif for the WATERMARK. Pre-installed on the
-# Ubuntu base image (fonts-dejavu-core), no download / fetch needed. Anton at
-# small watermark size looks cheap; a regular sans like DejaVu reads polished.
+# Simplex Sans = clean geometric display sans for the WATERMARK pill. SIL OFL.
+# Single Regular weight (no Bold ship). Designed for display sizes; safe at
+# our supersampled render (3× → effective 39px, downsampled to 13px final).
 CAPTION_FONT_PATH = "/app/assets/Anton.ttf"
-WATERMARK_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+WATERMARK_FONT_PATH = "/app/assets/SimplexSans-Regular.ttf"
 
 # Watermark layout — small sharp chip with gradient border (top-center).
 # Supersampling factor: render at 3× target size then LANCZOS-downsample

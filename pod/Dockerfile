@@ -59,11 +59,13 @@ RUN apt-get update -qq && apt-get install -y -qq libcairo2 fonts-dejavu-core && 
     rm -rf /var/lib/apt/lists/* && \
     pip install --no-cache-dir Pillow cairosvg
 
-# Anton (SIL OFL) — bold condensed, ideal for meme captions. Watermark text
-# uses DejaVu Sans Bold via fonts-dejavu-core (system path).
+# Anton (SIL OFL)        — bold condensed, meme captions
+# Simplex Sans (SIL OFL)  — clean geometric display sans, watermark pill text
 RUN mkdir -p /app/assets && \
     wget -q -O /app/assets/Anton.ttf \
-      https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf
+      https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf && \
+    wget -q -O /app/assets/SimplexSans-Regular.ttf \
+      https://raw.githubusercontent.com/popp3000/SimplexSans/main/fonts/SimplexSans-Regular.ttf
 
 # Bundle the real brand SVG so the pod renders the actual logo, not a fake one.
 COPY assets/logo-square2.svg /app/assets/logo-square2.svg
