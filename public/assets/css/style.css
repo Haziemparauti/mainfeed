@@ -1417,3 +1417,207 @@ img, svg { display: block; max-width: 100%; }
 .mf-progress[data-step="4"] span:nth-child(-n+4) {
   background: var(--accent);
 }
+
+/* ============ Bigger / always-visible back button (mobile PWA needs this) ============ */
+.mf-nav .mf-back {
+  display: inline-flex !important;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+  cursor: pointer;
+}
+.mf-nav .mf-back:hover { background: rgba(255,255,255,0.08); }
+.mf-nav .mf-back:active { background: rgba(255,255,255,0.12); }
+
+/* ============ Selfie slot — face-oval guide + dual action (camera / upload) ============ */
+.mf-selfie-preview {
+  position: relative;
+  aspect-ratio: 3/4;
+  border-radius: 14px;
+  border: 2px solid var(--border);
+  background: linear-gradient(135deg, #16161b 0%, #1d1d23 100%);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mf-selfie-preview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mf-face-oval {
+  position: absolute;
+  inset: 8% 18%;
+  width: 64%;
+  height: 84%;
+  pointer-events: none;
+  z-index: 2;
+}
+.mf-selfie-slot--filled .mf-face-oval { display: none; }
+.mf-selfie-num {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  z-index: 3;
+}
+.mf-selfie-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.mf-cta-soft {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  width: 100%;
+}
+.mf-cta-soft:hover { border-color: var(--accent); }
+.mf-link-upload {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-mute);
+  cursor: pointer;
+  padding: 4px;
+}
+.mf-link-upload:hover { color: var(--accent); text-decoration: underline; }
+
+/* ============ Video slot ============ */
+.mf-video-preview {
+  position: relative;
+  aspect-ratio: 3/4;
+  border-radius: 14px;
+  border: 2px solid var(--border);
+  background: linear-gradient(135deg, #16161b 0%, #1d1d23 100%);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.mf-video-preview video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+.mf-video-preview .mf-face-oval { z-index: 2; }
+.mf-video-icon {
+  position: relative;
+  z-index: 3;
+  font-size: 40px;
+  opacity: 0.6;
+}
+.mf-video-slot--filled .mf-face-oval,
+.mf-video-slot--filled .mf-video-icon { display: none; }
+#mf-video-record-btn { width: 100%; }
+
+/* ============ Camera modal (fullscreen, mirrored video + face oval) ============ */
+.mf-camera-modal,
+.mf-video-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.mf-camera-modal[hidden],
+.mf-video-modal[hidden] { display: none !important; }
+.mf-camera-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);   /* mirror front camera */
+  background: #000;
+}
+.mf-camera-oval {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.mf-camera-hint {
+  position: absolute;
+  top: env(safe-area-inset-top, 16px);
+  padding: 12px 18px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  font-size: 14px;
+  pointer-events: none;
+  z-index: 2;
+}
+.mf-camera-controls {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 0 24px;
+  z-index: 3;
+}
+.mf-camera-cancel {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+}
+.mf-camera-shutter {
+  width: 76px; height: 76px;
+  border-radius: 50%;
+  background: #fff;
+  border: 5px solid rgba(255,255,255,0.4);
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.95);
+  cursor: pointer;
+}
+.mf-camera-shutter:active { transform: scale(0.95); }
+.mf-camera-shutter--record { background: #ff3b30; }
+.mf-camera-shutter--recording {
+  background: #ff3b30;
+  animation: mf-pulse 1s ease-in-out infinite;
+}
+@keyframes mf-pulse { 50% { box-shadow: 0 0 0 8px rgba(255,59,48,0.6); } }
+.mf-video-countdown {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 120px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 4px 24px rgba(0,0,0,0.6);
+  z-index: 3;
+  pointer-events: none;
+}

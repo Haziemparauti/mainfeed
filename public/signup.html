@@ -2,22 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=9" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=9" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=10" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=10" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <button class="mf-back" id="mf-back-btn" type="button" aria-label="Go back">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"></polyline></svg>
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"></polyline></svg>
     </button>
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=9" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=9" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=10" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=10" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -31,7 +31,7 @@
       <!-- ============ Step 1: account ============ -->
       <section class="mf-step" data-step="1">
         <h1>Create your Mainfeed</h1>
-        <p class="mf-sub">Handle, email, password, and how you appear.</p>
+        <p class="mf-sub">Handle, email, password, gender.</p>
 
         <label class="mf-field">
           <span class="mf-prefix">mainfeed.app/@</span>
@@ -58,7 +58,7 @@
         </div>
 
         <div class="mf-gender-group">
-          <span class="mf-gender-label">You appear as</span>
+          <span class="mf-gender-label">Gender</span>
           <div class="mf-gender-toggle">
             <label class="mf-gender-option">
               <input type="radio" name="gender" value="m" required />
@@ -75,53 +75,65 @@
         <button class="mf-cta mf-cta-block" type="button" data-action="next-1">Continue</button>
       </section>
 
-      <!-- ============ Step 2: selfies ============ -->
+      <!-- ============ Step 2: selfies (custom camera widget w/ face oval + upload fallback) ============ -->
       <section class="mf-step" data-step="2" hidden>
         <h1>Two selfies of you</h1>
-        <p class="mf-sub">Front-facing, clear lighting.</p>
+        <p class="mf-sub">Front-facing, clear lighting. Center your face inside the oval.</p>
 
         <div class="mf-selfie-grid mf-selfie-grid--2">
-          <label class="mf-selfie-slot" data-slot="0">
-            <input type="file" id="mf-selfie-0" name="selfie_0" accept="image/*" capture="user" required />
-            <span class="mf-selfie-placeholder">
-              <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                <circle cx="12" cy="13" r="4"/>
+          <div class="mf-selfie-slot" data-slot="0">
+            <div class="mf-selfie-preview mf-face-oval-frame">
+              <svg class="mf-face-oval" viewBox="0 0 200 260" preserveAspectRatio="none" aria-hidden="true">
+                <ellipse cx="100" cy="130" rx="70" ry="100" fill="none" stroke="rgba(76,162,181,0.6)" stroke-width="3" stroke-dasharray="6 4"/>
               </svg>
-              <span>Selfie 1</span>
-            </span>
-          </label>
-          <label class="mf-selfie-slot" data-slot="1">
-            <input type="file" id="mf-selfie-1" name="selfie_1" accept="image/*" capture="user" required />
-            <span class="mf-selfie-placeholder">
-              <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                <circle cx="12" cy="13" r="4"/>
+              <span class="mf-selfie-num">1</span>
+            </div>
+            <div class="mf-selfie-actions">
+              <button type="button" class="mf-cta-soft" data-camera-open="0">📷 Take photo</button>
+              <label class="mf-link-upload">
+                Upload from device
+                <input type="file" data-file-input="0" accept="image/*" hidden />
+              </label>
+            </div>
+            <input type="hidden" data-blob-holder="0" name="selfie_0_marker" />
+          </div>
+
+          <div class="mf-selfie-slot" data-slot="1">
+            <div class="mf-selfie-preview mf-face-oval-frame">
+              <svg class="mf-face-oval" viewBox="0 0 200 260" preserveAspectRatio="none" aria-hidden="true">
+                <ellipse cx="100" cy="130" rx="70" ry="100" fill="none" stroke="rgba(76,162,181,0.6)" stroke-width="3" stroke-dasharray="6 4"/>
               </svg>
-              <span>Selfie 2</span>
-            </span>
-          </label>
+              <span class="mf-selfie-num">2</span>
+            </div>
+            <div class="mf-selfie-actions">
+              <button type="button" class="mf-cta-soft" data-camera-open="1">📷 Take photo</button>
+              <label class="mf-link-upload">
+                Upload from device
+                <input type="file" data-file-input="1" accept="image/*" hidden />
+              </label>
+            </div>
+            <input type="hidden" data-blob-holder="1" name="selfie_1_marker" />
+          </div>
         </div>
 
         <p class="mf-err" id="mf-err-2" hidden></p>
         <button class="mf-cta mf-cta-block" type="button" data-action="next-2">Continue</button>
       </section>
 
-      <!-- ============ Step 3: 5-second selfie video ============ -->
+      <!-- ============ Step 3: 5-second selfie video (auto-stop MediaRecorder) ============ -->
       <section class="mf-step" data-step="3" hidden>
         <h1>5-second video of you</h1>
-        <p class="mf-sub">Move your head slowly side to side. Confirms it's really you.</p>
+        <p class="mf-sub">Slowly turn your head left and right. We'll stop at 5 seconds automatically.</p>
 
-        <label class="mf-video-slot" id="mf-video-slot">
-          <input type="file" id="mf-video" name="liveness_video" accept="video/*" capture="user" required />
-          <span class="mf-video-placeholder">
-            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="23 7 16 12 23 17 23 7"/>
-              <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+        <div class="mf-video-slot" id="mf-video-slot">
+          <div class="mf-video-preview" id="mf-video-preview">
+            <svg class="mf-face-oval" viewBox="0 0 200 260" preserveAspectRatio="none" aria-hidden="true">
+              <ellipse cx="100" cy="130" rx="70" ry="100" fill="none" stroke="rgba(76,162,181,0.6)" stroke-width="3" stroke-dasharray="6 4"/>
             </svg>
-            <span id="mf-video-label">Record a 5-second video</span>
-          </span>
-        </label>
+            <span class="mf-video-icon">🎥</span>
+          </div>
+          <button type="button" class="mf-cta-soft" id="mf-video-record-btn">Record 5-second video</button>
+        </div>
 
         <p class="mf-err" id="mf-err-3" hidden></p>
         <button class="mf-cta mf-cta-block" type="button" data-action="next-3">Continue</button>
@@ -151,6 +163,35 @@
     </form>
   </main>
 
+  <!-- ============ Custom camera modal (photo capture w/ face oval guide) ============ -->
+  <div class="mf-camera-modal" id="mf-camera-modal" hidden aria-hidden="true">
+    <video class="mf-camera-video" id="mf-camera-video" playsinline muted autoplay></video>
+    <svg class="mf-camera-oval" viewBox="0 0 200 260" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <ellipse cx="100" cy="130" rx="70" ry="100" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="2" stroke-dasharray="6 4"/>
+    </svg>
+    <div class="mf-camera-hint" id="mf-camera-hint">Line your face inside the oval</div>
+    <div class="mf-camera-controls">
+      <button type="button" class="mf-camera-cancel" id="mf-camera-cancel" aria-label="Cancel">✕</button>
+      <button type="button" class="mf-camera-shutter" id="mf-camera-shutter" aria-label="Take photo"></button>
+      <div style="width:44px"></div>
+    </div>
+  </div>
+
+  <!-- ============ Custom 5-sec video recorder modal ============ -->
+  <div class="mf-video-modal" id="mf-video-modal" hidden aria-hidden="true">
+    <video class="mf-camera-video" id="mf-record-video" playsinline muted autoplay></video>
+    <svg class="mf-camera-oval" viewBox="0 0 200 260" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <ellipse cx="100" cy="130" rx="70" ry="100" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="2" stroke-dasharray="6 4"/>
+    </svg>
+    <div class="mf-camera-hint" id="mf-record-hint">Tap record. Auto-stops at 5 seconds.</div>
+    <div class="mf-video-countdown" id="mf-record-countdown" hidden></div>
+    <div class="mf-camera-controls">
+      <button type="button" class="mf-camera-cancel" id="mf-record-cancel" aria-label="Cancel">✕</button>
+      <button type="button" class="mf-camera-shutter mf-camera-shutter--record" id="mf-record-start" aria-label="Start recording"></button>
+      <div style="width:44px"></div>
+    </div>
+  </div>
+
   <script type="module">
     const API = location.hostname === 'localhost' ? 'http://localhost:8787' : 'https://api.mainfeed.app';
     const form = document.getElementById('mf-signup-form');
@@ -161,39 +202,34 @@
     const STEPS = 4;
     let currentStep = 1;
 
+    // Captured Blobs (kept in JS state since we can't programmatically populate <input type=file>)
+    const captured = { selfie_0: null, selfie_1: null, liveness_video: null };
+
     function showStep(step, pushHistory = true) {
       currentStep = step;
       document.querySelectorAll('.mf-step').forEach((s) => {
         s.hidden = Number(s.dataset.step) !== step;
       });
       progress.dataset.step = String(step);
-      if (pushHistory) {
-        history.pushState({ step }, '', `#step-${step}`);
-      }
+      if (pushHistory) history.pushState({ step }, '', `#step-${step}`);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    // Initial step (handle deep-links + reload)
     const hashStep = parseInt((location.hash.match(/^#step-(\d+)/) || [])[1] || '1', 10);
     showStep(Math.max(1, Math.min(STEPS, hashStep)), false);
     history.replaceState({ step: currentStep }, '', `#step-${currentStep}`);
 
-    // OS / browser back button → previous step (or home if on step 1)
     window.addEventListener('popstate', (e) => {
       const targetStep = (e.state && e.state.step) || 1;
       showStep(targetStep, false);
     });
 
-    // Back arrow in the nav header
     backBtn.addEventListener('click', () => {
-      if (currentStep > 1) {
-        history.back();
-      } else {
-        location.href = '/';
-      }
+      if (currentStep > 1) history.back();
+      else location.href = '/';
     });
 
-    // === Password show/hide toggle (single eye-with-slash icon) ===
+    // === Password show/hide (single eye + slash) ===
     const pwInput = document.getElementById('mf-password');
     const eyeBtn = document.getElementById('mf-eye-btn');
     eyeBtn.addEventListener('click', () => {
@@ -203,33 +239,6 @@
       eyeBtn.setAttribute('aria-label', isText ? 'Show password' : 'Hide password');
     });
 
-    // === Selfie thumbnails after pick ===
-    [0, 1].forEach((i) => {
-      const input = document.getElementById(`mf-selfie-${i}`);
-      const slot = document.querySelector(`.mf-selfie-slot[data-slot="${i}"]`);
-      input.addEventListener('change', () => {
-        const f = input.files && input.files[0];
-        if (!f) return;
-        const url = URL.createObjectURL(f);
-        slot.classList.add('mf-selfie-slot--filled');
-        const ph = slot.querySelector('.mf-selfie-placeholder');
-        ph.innerHTML = `<img src="${url}" alt="selfie ${i+1}" />`;
-      });
-    });
-
-    // === Video thumbnail / filename after record ===
-    const videoInput = document.getElementById('mf-video');
-    const videoSlot = document.getElementById('mf-video-slot');
-    videoInput.addEventListener('change', () => {
-      const f = videoInput.files && videoInput.files[0];
-      if (!f) return;
-      videoSlot.classList.add('mf-video-slot--filled');
-      const ph = videoSlot.querySelector('.mf-video-placeholder');
-      const url = URL.createObjectURL(f);
-      ph.innerHTML = `<video src="${url}" muted playsinline></video><span>Tap to re-record</span>`;
-    });
-
-    // === Step validation + advance ===
     function clearErr(step) {
       const el = document.getElementById(`mf-err-${step}`);
       if (el) { el.hidden = true; el.textContent = ''; }
@@ -239,6 +248,193 @@
       if (el) { el.hidden = false; el.textContent = msg; }
     }
 
+    function attachThumb(slotIdx, blob) {
+      captured[`selfie_${slotIdx}`] = blob;
+      const slot = document.querySelector(`.mf-selfie-slot[data-slot="${slotIdx}"]`);
+      const preview = slot.querySelector('.mf-selfie-preview');
+      const url = URL.createObjectURL(blob);
+      preview.innerHTML = `<img src="${url}" alt="selfie ${slotIdx + 1}" />`;
+      slot.classList.add('mf-selfie-slot--filled');
+    }
+
+    function attachVideoThumb(blob) {
+      captured.liveness_video = blob;
+      const preview = document.getElementById('mf-video-preview');
+      const url = URL.createObjectURL(blob);
+      preview.innerHTML = `<video src="${url}" muted playsinline autoplay loop></video>`;
+      document.getElementById('mf-video-slot').classList.add('mf-video-slot--filled');
+      document.getElementById('mf-video-record-btn').textContent = 'Re-record';
+    }
+
+    // === File upload fallback (for both selfie slots) ===
+    document.querySelectorAll('input[data-file-input]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const slotIdx = Number(input.dataset.fileInput);
+        const f = input.files && input.files[0];
+        if (!f) return;
+        if (!f.type.startsWith('image/')) {
+          showErr(2, 'That file is not an image.');
+          return;
+        }
+        attachThumb(slotIdx, f);
+      });
+    });
+
+    // === Custom camera modal — photo capture w/ face-oval guide ===
+    const cameraModal = document.getElementById('mf-camera-modal');
+    const cameraVideo = document.getElementById('mf-camera-video');
+    const cameraShutter = document.getElementById('mf-camera-shutter');
+    const cameraCancel = document.getElementById('mf-camera-cancel');
+    let cameraStream = null;
+    let cameraTargetSlot = null;
+
+    function stopStream(stream) {
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+    }
+
+    async function openCamera(slotIdx) {
+      cameraTargetSlot = slotIdx;
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1440 } },
+          audio: false,
+        });
+      } catch (err) {
+        showErr(2, 'Camera permission denied. Use "Upload from device" instead.');
+        return;
+      }
+      cameraVideo.srcObject = cameraStream;
+      cameraModal.hidden = false;
+      cameraModal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeCamera() {
+      cameraModal.hidden = true;
+      cameraModal.setAttribute('aria-hidden', 'true');
+      stopStream(cameraStream);
+      cameraStream = null;
+      cameraVideo.srcObject = null;
+    }
+
+    cameraCancel.addEventListener('click', closeCamera);
+
+    cameraShutter.addEventListener('click', () => {
+      if (!cameraVideo.videoWidth) return;
+      const vw = cameraVideo.videoWidth;
+      const vh = cameraVideo.videoHeight;
+      // Crop a square centered on the face-oval region (roughly center, slightly upper).
+      // The oval's viewBox is 200x260, ellipse center 100,130, ry=100 — so the face region
+      // covers ~76% of the height centered slightly above middle. Crop a square of side
+      // = min(vw, vh*0.77) centered on (vw/2, vh*0.50).
+      const side = Math.min(vw, Math.floor(vh * 0.77));
+      const sx = Math.floor((vw - side) / 2);
+      const sy = Math.floor(vh * 0.50 - side / 2);
+      const canvas = document.createElement('canvas');
+      canvas.width = side;
+      canvas.height = side;
+      const ctx = canvas.getContext('2d');
+      // Mirror so the saved image matches what user saw (front-camera preview is mirrored).
+      ctx.translate(side, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(cameraVideo, sx, sy, side, side, 0, 0, side, side);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        attachThumb(cameraTargetSlot, blob);
+        closeCamera();
+      }, 'image/jpeg', 0.92);
+    });
+
+    document.querySelectorAll('[data-camera-open]').forEach((btn) => {
+      btn.addEventListener('click', () => openCamera(Number(btn.dataset.cameraOpen)));
+    });
+
+    // === Custom video recorder — MediaRecorder w/ 5-sec auto-stop ===
+    const videoModal = document.getElementById('mf-video-modal');
+    const recordVideo = document.getElementById('mf-record-video');
+    const recordStart = document.getElementById('mf-record-start');
+    const recordCancel = document.getElementById('mf-record-cancel');
+    const recordCountdown = document.getElementById('mf-record-countdown');
+    const recordHint = document.getElementById('mf-record-hint');
+    let recordStream = null;
+    let recorder = null;
+    let countdownTimer = null;
+
+    async function openRecorder() {
+      try {
+        recordStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 } },
+          audio: false,
+        });
+      } catch (err) {
+        showErr(3, 'Camera permission denied. Reload and allow access.');
+        return;
+      }
+      recordVideo.srcObject = recordStream;
+      videoModal.hidden = false;
+      videoModal.setAttribute('aria-hidden', 'false');
+      recordCountdown.hidden = true;
+      recordHint.textContent = 'Tap the red button. Auto-stops at 5 seconds.';
+      recordStart.disabled = false;
+      recordStart.classList.remove('mf-camera-shutter--recording');
+    }
+
+    function closeRecorder() {
+      videoModal.hidden = true;
+      videoModal.setAttribute('aria-hidden', 'true');
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      try { recorder && recorder.state !== 'inactive' && recorder.stop(); } catch (_) {}
+      recorder = null;
+      stopStream(recordStream);
+      recordStream = null;
+      recordVideo.srcObject = null;
+    }
+
+    recordCancel.addEventListener('click', closeRecorder);
+
+    recordStart.addEventListener('click', () => {
+      if (!recordStream) return;
+      const chunks = [];
+      // Prefer mp4 if browser supports it, fall back to webm
+      let mime = '';
+      const candidates = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      for (const c of candidates) {
+        if (MediaRecorder.isTypeSupported(c)) { mime = c; break; }
+      }
+      try {
+        recorder = new MediaRecorder(recordStream, mime ? { mimeType: mime } : undefined);
+      } catch (err) {
+        showErr(3, 'This browser does not support video recording. Try Chrome/Safari latest.');
+        closeRecorder();
+        return;
+      }
+      recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); });
+      recorder.addEventListener('stop', () => {
+        const blob = new Blob(chunks, { type: mime || 'video/webm' });
+        attachVideoThumb(blob);
+        closeRecorder();
+      });
+      recorder.start();
+      recordStart.disabled = true;
+      recordStart.classList.add('mf-camera-shutter--recording');
+      recordHint.textContent = '';
+      recordCountdown.hidden = false;
+      let left = 5;
+      recordCountdown.textContent = left;
+      countdownTimer = setInterval(() => {
+        left -= 1;
+        if (left <= 0) {
+          clearInterval(countdownTimer); countdownTimer = null;
+          recordCountdown.textContent = '0';
+          try { recorder.stop(); } catch (_) {}
+        } else {
+          recordCountdown.textContent = left;
+        }
+      }, 1000);
+    });
+
+    document.getElementById('mf-video-record-btn').addEventListener('click', openRecorder);
+
+    // === Step validation + advance ===
     document.querySelector('[data-action="next-1"]').addEventListener('click', () => {
       clearErr(1);
       const handle = document.getElementById('mf-handle').value.trim().toLowerCase();
@@ -253,15 +449,12 @@
     });
     document.querySelector('[data-action="next-2"]').addEventListener('click', () => {
       clearErr(2);
-      const s0 = document.getElementById('mf-selfie-0').files?.[0];
-      const s1 = document.getElementById('mf-selfie-1').files?.[0];
-      if (!s0 || !s1) return showErr(2, 'Both selfie slots are required.');
+      if (!captured.selfie_0 || !captured.selfie_1) return showErr(2, 'Take or upload both selfies.');
       showStep(3);
     });
     document.querySelector('[data-action="next-3"]').addEventListener('click', () => {
       clearErr(3);
-      const v = videoInput.files?.[0];
-      if (!v) return showErr(3, 'Record a 5-second video to continue.');
+      if (!captured.liveness_video) return showErr(3, 'Record a 5-second video to continue.');
       showStep(4);
     });
 
@@ -273,13 +466,14 @@
       weak_password: 'Password must be at least 8 characters.',
       invalid_gender: 'Go back and pick male or female.',
       consent_required: 'You need to confirm both the age and Terms boxes.',
-      need_at_least_one_selfie: 'Go back and attach at least one selfie.',
+      need_at_least_one_selfie: 'Go back and capture both selfies.',
       invalid_image_type: 'One of the selfies is not a supported image.',
       selfie_too_large: 'Selfie too large (max 8 MB).',
       handle_or_email_taken: 'That handle or email is already in use.',
       rate_limited: 'Too many signups from this IP — try in a minute.',
       user_cap_reached: 'We are full while testing. Try again later.',
       expected_multipart: 'Bad form submission — try refreshing.',
+      liveness_video_too_large: 'Liveness video too large (max 32 MB).',
     };
 
     form.addEventListener('submit', async (e) => {
@@ -291,10 +485,19 @@
       submitBtn.disabled = true;
       submitBtn.textContent = 'Creating your Mainfeed…';
       try {
-        const fd = new FormData(form);
+        const fd = new FormData();
+        fd.set('handle', document.getElementById('mf-handle').value.trim().toLowerCase());
+        fd.set('email', document.getElementById('mf-email').value.trim().toLowerCase());
+        fd.set('password', pwInput.value);
+        fd.set('gender', (document.querySelector('input[name="gender"]:checked') || {}).value || '');
         fd.set('consent_age', 'true');
         fd.set('consent_terms', 'true');
-        // gender + selfie_0 + selfie_1 + liveness_video are already set via form fields
+        if (captured.selfie_0) fd.append('selfie_0', captured.selfie_0, 'selfie_0.jpg');
+        if (captured.selfie_1) fd.append('selfie_1', captured.selfie_1, 'selfie_1.jpg');
+        if (captured.liveness_video) {
+          const ext = (captured.liveness_video.type && captured.liveness_video.type.includes('mp4')) ? 'mp4' : 'webm';
+          fd.append('liveness_video', captured.liveness_video, `liveness.${ext}`);
+        }
 
         const res = await fetch(`${API}/api/signup`, {
           method: 'POST',
