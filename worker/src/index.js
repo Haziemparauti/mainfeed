@@ -1506,10 +1506,10 @@ function checkPodSecret(request, env) {
 //   source_image_url:  string (anything the pod can fetch — Fal CDN, our public/selfie, etc.)
 //   target_filename:   string (basename without extension — e.g. "cop_s07_coffee_plaza_f")
 //   request_id?:       string (auto-generated if missing)
-//   output_upload_url?: string (R2 presigned PUT URL for the result mp4; null = pod keeps locally)
+//   output_r2_key?:    string (key in mainfeed-content; default "generated/<request_id>.mp4")
 //   sample_steps?:     int (default 16)
 //   sample_guide_scale_img?: float (default 4.0)
-//   size?:             string (default "832x480")
+//   size?:             string (default "832*480")
 // }
 // Forwards to ${SWAP_POD_URL}/swap with Authorization: Bearer ${SWAP_POD_SECRET}.
 async function handleAdminSwapQueue(request, env, origin) {
@@ -1535,6 +1535,9 @@ async function handleAdminSwapQueue(request, env, origin) {
   const requestId = String(body.request_id || crypto.randomUUID());
   const targetVideoUrl = `https://api.mainfeed.app/public/stock/${targetFilename}.mp4`;
   const callbackUrl = 'https://api.mainfeed.app/api/swap/complete';
+  const outputR2Key = typeof body.output_r2_key === 'string' && body.output_r2_key
+    ? body.output_r2_key
+    : `generated/${requestId}.mp4`;
 
   const payload = {
     request_id: requestId,
@@ -1543,7 +1546,7 @@ async function handleAdminSwapQueue(request, env, origin) {
     target_pose_url: body.target_pose_url || null,
     target_mask_url: body.target_mask_url || null,
     callback_url: callbackUrl,
-    output_upload_url: body.output_upload_url || null,
+    output_r2_key: outputR2Key,
     sample_steps: Number.isFinite(body.sample_steps) ? Number(body.sample_steps) : 16,
     sample_guide_scale_img: Number.isFinite(body.sample_guide_scale_img)
       ? Number(body.sample_guide_scale_img) : 4.0,
@@ -1586,6 +1589,7 @@ async function handleAdminSwapQueue(request, env, origin) {
     pod_url: podUrl,
     target_video_url: targetVideoUrl,
     callback_url: callbackUrl,
+    output_r2_key: outputR2Key,
     pod_response: podJson || podText.slice(0, 400),
   }, {}, origin);
 }
@@ -1593,13 +1597,13 @@ async function handleAdminSwapQueue(request, env, origin) {
 // POST /api/swap/complete
 // Called by the pod when a swap finishes (success or failure).
 // Authed via Authorization: Bearer ${SWAP_POD_SECRET}.
-// Body (JSON): { request_id, status: 'completed'|'failed', elapsed_sec?, error?, output_uploaded? }
+// Body (JSON): { request_id, status: 'completed'|'failed', elapsed_sec?, error?,
+//                output_bytes?, r2_bucket?, r2_key? }
 //
 // For now this is a logging stub — it records the result via console and returns ok.
 // When the production user→swap flow is wired, this will:
 //   - Look up the pending generated_pieces row by request_id
-//   - Update status='ready' on success, status='failed' on error
-//   - Fetch the output mp4 from output_upload_url and store to R2 if not already there
+//   - Update status='ready' / 'failed' and store r2_key
 //   - Trigger a Web Push notification to the user's device
 async function handleSwapComplete(request, env, origin) {
   if (!checkPodSecret(request, env)) return errResp('unauthorized', 401, origin);
@@ -1613,7 +1617,9 @@ async function handleSwapComplete(request, env, origin) {
     status,
     elapsed_sec: body.elapsed_sec,
     error: body.error,
-    output_uploaded: body.output_uploaded,
+    output_bytes: body.output_bytes,
+    r2_bucket: body.r2_bucket,
+    r2_key: body.r2_key,
   }));
 
   return json({ ok: true, ack: requestId }, {}, origin);

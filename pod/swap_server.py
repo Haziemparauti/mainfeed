@@ -22,13 +22,19 @@ Validated invocation (cop_s07_coffee_plaza_f + example1_512.jpg, 2026-05-25):
 Auth: protected endpoints require `Authorization: Bearer $SWAP_POD_SECRET`.
 
 Environment:
-  SWAP_POD_SECRET    — shared bearer between worker and pod. Required.
-  WEIGHTS_DIR        — root for cached weights. Default /workspace/ckpts.
-  DREAMIDV_DIR       — DreamID-V repo checkout. Default /root/dreamidv.
-  OUTPUT_DIR         — per-request workdir parent. Default /workspace/tmp.
-  PORT               — bind port. Default 8000.
-  HF_TOKEN           — optional, only if the HF repos require auth.
-  DEBUG_KEEP_WORKDIR — "1" to retain workdirs after each swap (debugging).
+  SWAP_POD_SECRET      — shared bearer between worker and pod. Required.
+  WEIGHTS_DIR          — root for cached weights. Default /workspace/ckpts.
+  DREAMIDV_DIR         — DreamID-V repo checkout. Default /root/dreamidv.
+  OUTPUT_DIR           — per-request workdir parent. Default /workspace/tmp.
+  PORT                 — bind port. Default 8000.
+  HF_TOKEN             — optional, only if HF repos require auth.
+  DEBUG_KEEP_WORKDIR   — "1" to retain workdirs after each swap (debugging).
+
+  R2_ACCOUNT_ID        — Cloudflare account ID for R2.
+  R2_ACCESS_KEY_ID     — R2 S3-compat access key.
+  R2_SECRET_ACCESS_KEY — R2 S3-compat secret.
+  R2_BUCKET            — bucket name for swap outputs. Default mainfeed-content.
+  R2_OUTPUT_PREFIX     — key prefix. Default generated/.
 """
 
 from __future__ import annotations
@@ -40,8 +46,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import boto3
 import httpx
 import uvicorn
+from botocore.client import Config as BotoConfig
 from fastapi import FastAPI, Header, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
@@ -59,6 +67,14 @@ DREAMIDV_FASTER_CKPT = WEIGHTS_DIR / "dreamidv_faster.pth"
 WAN21_DIR = WEIGHTS_DIR / "wan2.1"
 DWPOSE_DIR = DREAMIDV_DIR / "pose" / "models"
 
+# R2 (Cloudflare S3-compatible) — for uploading swap outputs.
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "1107173d768105bad60ebb40ff28ef3d")
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET = os.environ.get("R2_BUCKET", "mainfeed-content")
+R2_OUTPUT_PREFIX = os.environ.get("R2_OUTPUT_PREFIX", "generated/").rstrip("/") + "/"
+R2_ENABLED = bool(R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY)
+
 
 # ============ state ============
 
@@ -71,9 +87,23 @@ class State:
         self.total_completed = 0
         self.total_failed = 0
         self.last_error: Optional[str] = None
+        self.r2: Optional[object] = None
 
 
 STATE = State()
+
+
+def build_r2_client():
+    if not R2_ENABLED:
+        return None
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        config=BotoConfig(signature_version="s3v4"),
+        region_name="auto",
+    )
 
 
 # ============ API models ============
@@ -87,7 +117,10 @@ class SwapRequest(BaseModel):
     target_pose_url: Optional[str] = None
     target_mask_url: Optional[str] = None
     callback_url: str
-    output_upload_url: Optional[str] = None
+    # R2 key under R2_BUCKET where the output mp4 should land (e.g.
+    # "generated/u/<user_id>/<piece_id>.mp4"). If null, defaults to
+    # f"{R2_OUTPUT_PREFIX}{request_id}.mp4".
+    output_r2_key: Optional[str] = None
     sample_steps: int = 16
     sample_guide_scale_img: float = 4.0
     size: str = "832*480"   # DreamID-V uses asterisk-separated W*H
@@ -161,12 +194,22 @@ async def download_to(url: str, dest: Path) -> None:
                     f.write(chunk)
 
 
-async def upload_to(url: str, src: Path, content_type: str = "video/mp4") -> None:
-    async with httpx.AsyncClient(timeout=600.0) as client:
-        with open(src, "rb") as f:
-            resp = await client.put(url, content=f.read(),
-                                    headers={"Content-Type": content_type})
-            resp.raise_for_status()
+def upload_to_r2(src: Path, key: str, content_type: str = "video/mp4") -> dict:
+    """Upload a local file to R2 at `key` under R2_BUCKET. Returns metadata."""
+    if not STATE.r2:
+        raise RuntimeError("R2 not configured (missing R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY)")
+    STATE.r2.upload_file(
+        Filename=str(src),
+        Bucket=R2_BUCKET,
+        Key=key,
+        ExtraArgs={"ContentType": content_type},
+    )
+    return {
+        "bucket": R2_BUCKET,
+        "key": key,
+        "size": src.stat().st_size,
+        "s3_url": f"s3://{R2_BUCKET}/{key}",
+    }
 
 
 async def callback(callback_url: str, payload: dict) -> None:
@@ -232,6 +275,10 @@ async def run_swap(req: SwapRequest) -> None:
     src_image = workdir / "source.jpg"
     ref_video = workdir / "target.mp4"
     started = time.time()
+
+    # Resolve R2 destination — caller may override; otherwise key by request_id.
+    r2_key = req.output_r2_key or f"{R2_OUTPUT_PREFIX}{req.request_id}.mp4"
+
     try:
         await download_to(req.source_image_url, src_image)
         await download_to(req.target_video_url, ref_video)
@@ -243,8 +290,15 @@ async def run_swap(req: SwapRequest) -> None:
                 req.size, req.base_seed, req.frame_num,
             )
 
-        if req.output_upload_url:
-            await upload_to(req.output_upload_url, output)
+        # Upload output mp4 to R2 (this is the canonical delivery surface).
+        r2_meta = None
+        if R2_ENABLED:
+            r2_meta = await asyncio.get_event_loop().run_in_executor(
+                None, upload_to_r2, output, r2_key, "video/mp4",
+            )
+            print(f"[swap_server] {req.request_id} → r2://{r2_meta['bucket']}/{r2_meta['key']}", flush=True)
+        else:
+            print(f"[swap_server] {req.request_id} WARNING: R2 not configured, output kept on pod disk only", flush=True)
 
         elapsed = round(time.time() - started, 2)
         STATE.total_completed += 1
@@ -252,8 +306,9 @@ async def run_swap(req: SwapRequest) -> None:
             "request_id": req.request_id,
             "status": "completed",
             "elapsed_sec": elapsed,
-            "output_uploaded": bool(req.output_upload_url),
             "output_bytes": output.stat().st_size if output.exists() else 0,
+            "r2_bucket": (r2_meta or {}).get("bucket"),
+            "r2_key":    (r2_meta or {}).get("key"),
         })
         print(f"[swap_server] {req.request_id} OK in {elapsed}s", flush=True)
     except Exception as e:
@@ -295,6 +350,13 @@ async def on_startup() -> None:
     script = DREAMIDV_DIR / "generate_dreamidv_faster.py"
     if not script.exists():
         raise RuntimeError(f"DreamID-V script missing at {script}")
+    # Build R2 client + smoke-test perms on the configured bucket
+    STATE.r2 = build_r2_client()
+    if STATE.r2:
+        STATE.r2.head_bucket(Bucket=R2_BUCKET)
+        print(f"[swap_server] R2 OK — bucket={R2_BUCKET} prefix={R2_OUTPUT_PREFIX}", flush=True)
+    else:
+        print("[swap_server] R2 disabled (no creds set)", flush=True)
     STATE.model_loaded = True
     print(f"[swap_server] ready on port {PORT}", flush=True)
 
