@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=18" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=18" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=19" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=19" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=18" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=18" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=19" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=19" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -23,7 +23,7 @@
       <span></span><span></span><span></span><span></span>
     </div>
 
-    <form id="mf-signup-form" enctype="multipart/form-data">
+    <form id="mf-signup-form" enctype="multipart/form-data" novalidate>
 
       <!-- ============ Step 1: account ============ -->
       <section class="mf-step" data-step="1">
@@ -638,14 +638,34 @@
       expected_multipart: 'Bad form submission — try refreshing.',
       liveness_video_too_large: 'Liveness video too large (max 32 MB).',
     };
+    function setSubmitStage(msg) {
+      submitBtn.textContent = msg;
+      // Also surface in the error slot in muted form, so we have a second
+      // visible place reflecting progress (helps when scroll position hides
+      // the button label).
+      const el = document.getElementById('mf-err-4');
+      el.hidden = false;
+      el.style.color = '#9aa';
+      el.textContent = msg;
+    }
+    function clearSubmitStage() {
+      const el = document.getElementById('mf-err-4');
+      el.style.color = '';
+    }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearErr(4);
+      clearSubmitStage();
       if (!document.getElementById('mf-consent-age').checked || !document.getElementById('mf-consent-terms').checked) {
         return showErr(4, 'You need to confirm both boxes.');
       }
+      // Sanity-check captured data before the network round-trip so the user
+      // sees a precise message rather than a generic 4xx from the server.
+      if (!captured.selfie_0 || !captured.selfie_1) return showErr(4, 'Go back to step 2 and add both selfies.');
+      if (!captured.liveness_video) return showErr(4, 'Go back to step 3 and record the 10-second video.');
+
       submitBtn.disabled = true;
-      submitBtn.textContent = 'Creating your Mainfeed…';
+      setSubmitStage('Packing your photos…');
       try {
         const fd = new FormData();
         fd.set('handle', document.getElementById('mf-handle').value.trim().toLowerCase());
@@ -661,17 +681,40 @@
           const ext = t.includes('mp4') ? 'mp4' : t.includes('quicktime') ? 'mov' : t.includes('webm') ? 'webm' : 'mp4';
           fd.append('liveness_video', captured.liveness_video, `liveness.${ext}`);
         }
-        const res = await fetch(`${API}/api/signup`, { method: 'POST', body: fd, credentials: 'include' });
+
+        setSubmitStage('Uploading to Mainfeed…');
+        // Abort after 90s so a stuck request becomes a visible failure.
+        const ctrl = new AbortController();
+        const killer = setTimeout(() => ctrl.abort(), 90000);
+        let res;
+        try {
+          res = await fetch(`${API}/api/signup`, {
+            method: 'POST',
+            body: fd,
+            credentials: 'include',
+            signal: ctrl.signal,
+          });
+        } finally {
+          clearTimeout(killer);
+        }
+        setSubmitStage('Server is processing…');
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          showErr(4, ERR[data.error] || `Signup failed (${data.error || res.status})`);
+          clearSubmitStage();
+          showErr(4, ERR[data.error] || `Signup failed (${data.error || res.status}). Tap to retry.`);
           submitBtn.disabled = false;
           submitBtn.textContent = 'Create my Mainfeed';
           return;
         }
+        setSubmitStage('Done! Loading your feed…');
         location.href = '/app.html';
       } catch (err) {
-        showErr(4, 'Network error. Check your connection and try again.');
+        clearSubmitStage();
+        const isAbort = err && (err.name === 'AbortError' || /aborted/i.test(String(err.message || '')));
+        const msg = isAbort
+          ? 'Upload timed out after 90s — your connection or our server is slow. Tap Create my Mainfeed to retry.'
+          : `Network error (${(err && err.message) || 'unknown'}). Check your connection and tap Create my Mainfeed to retry.`;
+        showErr(4, msg);
         submitBtn.disabled = false;
         submitBtn.textContent = 'Create my Mainfeed';
       }
