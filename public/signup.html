@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=16" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=16" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=17" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=17" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=16" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=16" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=17" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=17" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -133,10 +133,6 @@
           <button type="button" class="mf-btn-action mf-btn-action--primary" id="mf-video-record-btn">
             <span class="mf-red-dot"></span> Start recording
           </button>
-          <button type="button" class="mf-btn-action" id="mf-video-device-btn">
-            <span>🎥</span> Use device camera
-          </button>
-          <input type="file" id="mf-video-fallback" accept="video/*" capture="user" hidden />
           <button type="button" class="mf-link-retake" id="mf-video-retake" hidden>Re-record</button>
         </div>
 
@@ -276,43 +272,6 @@
       }
     }
 
-    async function detectFaceInVideo(blob) {
-      const url = URL.createObjectURL(blob);
-      try {
-        const video = document.createElement('video');
-        video.src = url;
-        video.muted = true;
-        video.playsInline = true;
-        video.preload = 'auto';
-        await new Promise((resolve, reject) => {
-          video.onloadedmetadata = resolve;
-          video.onerror = () => reject(new Error('video_load_failed'));
-        });
-        const detector = await getDetector();
-        const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : 5;
-        const samplePoints = [dur * 0.2, dur * 0.5, dur * 0.8];
-        const canvas = document.createElement('canvas');
-        let found = 0;
-        for (const t of samplePoints) {
-          await new Promise((resolve) => {
-            video.currentTime = Math.min(t, dur - 0.05);
-            video.onseeked = resolve;
-          });
-          if (!canvas.width) {
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
-          }
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const result = detector.detect(canvas);
-          if (result.detections.length > 0) found++;
-        }
-        return { found, total: samplePoints.length };
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    }
-
     // ============ Step 2: selfies — file → face-check → save ============
     async function handleSelfieFile(slotIdx, file) {
       clearErr(2);
@@ -374,9 +333,6 @@
     const recordBtn = document.getElementById('mf-video-record-btn');
     const videoRetakeBtn = document.getElementById('mf-video-retake');
     const videoStage = document.getElementById('mf-video-stage');
-    // (Native-camera fallback removed — it silently bypassed our 10-sec limit
-    // and live face-check. If getUserMedia fails the user now sees an actionable
-    // error message instead.)
 
     const REC_DURATION_SEC = 10;
     let recStream = null;
@@ -412,43 +368,25 @@
       if (faceSampleTimer) { clearInterval(faceSampleTimer); faceSampleTimer = null; }
     }
 
-    function setVideoCaptured(blob, options = {}) {
+    function setVideoCaptured(blob, faceFrames) {
       const url = URL.createObjectURL(blob);
       videoStage.innerHTML = `<video class="mf-saved-img" src="${url}" muted playsinline autoplay loop></video>`;
       videoStage.classList.add('mf-video-stage--captured');
       recordBtn.hidden = true;
       videoRetakeBtn.hidden = false;
-
-      // If we already validated face presence during live recording (the custom
-      // recorder path), trust those stats and skip re-analyzing the blob.
-      if (options.facesAlreadyChecked) {
-        if (options.faceFrames > 0) {
-          captured.liveness_video = blob;
-          clearErr(3);
-        } else {
-          captured.liveness_video = null;
-          showErr(3, "We couldn't find your face in the video. Re-record with your face clearly in frame.");
-        }
-        return;
-      }
-
-      // Fallback path (native camera) — we don't have live samples; sample the
-      // blob via seek+rAF instead.
-      setBusy(3, true, 'Checking for a face…');
-      detectFaceInVideo(blob).then((r) => {
-        setBusy(3, false);
-        if (r.found < 1) {
-          showErr(3, "We couldn't find your face in the video. Re-record with your face clearly in frame.");
-          captured.liveness_video = null;
-        } else {
-          captured.liveness_video = blob;
-          clearErr(3);
-        }
-      }).catch(() => {
-        setBusy(3, false);
-        showErr(3, 'Could not analyze the video. Try again.');
+      const busyEl = document.getElementById('mf-busy-3');
+      if (faceFrames > 0) {
+        captured.liveness_video = blob;
+        clearErr(3);
+        busyEl.hidden = false;
+        busyEl.textContent = '✓ Face detected — tap Continue';
+        busyEl.classList.add('mf-busy--ok');
+      } else {
         captured.liveness_video = null;
-      });
+        busyEl.hidden = true;
+        busyEl.classList.remove('mf-busy--ok');
+        showErr(3, "We couldn't find your face in the video. Re-record with your face clearly in frame.");
+      }
     }
 
     function resetVideo() {
@@ -456,9 +394,10 @@
       videoStage.innerHTML = '<span class="mf-stage-icon">🎥</span>';
       videoStage.classList.remove('mf-video-stage--captured');
       recordBtn.hidden = false;
-      const dbtn = document.getElementById('mf-video-device-btn');
-      if (dbtn) dbtn.hidden = false;
       videoRetakeBtn.hidden = true;
+      const busyEl = document.getElementById('mf-busy-3');
+      busyEl.hidden = true;
+      busyEl.classList.remove('mf-busy--ok');
       clearErr(3);
     }
     videoRetakeBtn.addEventListener('click', resetVideo);
@@ -483,13 +422,12 @@
       const pwaFix = isStandalone
         ? 'Long-press the Mainfeed app icon on your home screen → App info → Permissions → Camera → Allow.'
         : 'Tap the lock icon in the address bar → Permissions → Camera → Allow, then tap Start recording again.';
-      const orDevice = ' Or tap "Use device camera" below.';
 
       if (navigator.permissions && navigator.permissions.query) {
         try {
           const p = await navigator.permissions.query({ name: 'camera' });
           if (p.state === 'denied') {
-            return showErr(3, 'Camera is blocked for this site. ' + pwaFix + orDevice);
+            return showErr(3, 'Camera is blocked for this site. ' + pwaFix);
           }
         } catch (_) { /* not all browsers support camera permission query — ignore */ }
       }
@@ -503,13 +441,13 @@
         const name = (err && err.name) || 'unknown';
         let msg;
         if (name === 'NotAllowedError' || name === 'SecurityError') {
-          msg = 'Camera permission denied. ' + pwaFix + orDevice;
+          msg = 'Camera permission denied. ' + pwaFix;
         } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-          msg = 'No front camera detected on this device.' + orDevice;
+          msg = 'No front camera detected on this device.';
         } else if (name === 'NotReadableError') {
-          msg = 'Camera is in use by another app. Close camera apps and try again.' + orDevice;
+          msg = 'Camera is in use by another app. Close camera apps and try again.';
         } else {
-          msg = `Camera unavailable (${name}).` + orDevice;
+          msg = `Camera unavailable (${name}). Reload and try again.`;
         }
         return showErr(3, msg);
       }
@@ -547,7 +485,7 @@
         recorder = new MediaRecorder(recStream, mime ? { mimeType: mime } : undefined);
       } catch (err) {
         closeRecorderModal();
-        showErr(3, 'This browser cannot record. Tap "Start recording" again to use the device camera.');
+        showErr(3, 'This browser cannot record video. Open mainfeed.app in Chrome and try again.');
         return;
       }
       recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); });
@@ -556,7 +494,7 @@
         const stats = { ...faceSampleStats };
         stopLiveFaceSampling();
         closeRecorderModal();
-        setVideoCaptured(blob, { facesAlreadyChecked: true, faceFrames: stats.withFace, totalFrames: stats.total });
+        setVideoCaptured(blob, stats.withFace);
       });
       recorder.start();
       startLiveFaceSampling();
@@ -575,94 +513,6 @@
       }, 1000);
     }
     recordBtn.addEventListener('click', openRecorderFlow);
-
-    // ============ Explicit "Use device camera" path ============
-    // User-triggered fallback for when getUserMedia is permanently denied.
-    // Opens the OS camera. We accept videos in a generous duration window and
-    // validate face presence by PLAYING the saved blob and sampling frames
-    // during playback (more reliable than seek+rAF on Android).
-    const videoDeviceBtn = document.getElementById('mf-video-device-btn');
-    const videoFallback = document.getElementById('mf-video-fallback');
-    videoDeviceBtn.addEventListener('click', () => videoFallback.click());
-
-    async function detectFaceInBlobByPlay(blob, maxSeconds = 6) {
-      return new Promise((resolve) => {
-        const video = document.createElement('video');
-        video.src = URL.createObjectURL(blob);
-        video.muted = true;
-        video.playsInline = true;
-        video.preload = 'auto';
-        const stats = { total: 0, withFace: 0 };
-        let interval = null;
-        let stopped = false;
-        const finish = () => {
-          if (stopped) return;
-          stopped = true;
-          if (interval) clearInterval(interval);
-          try { video.pause(); } catch (_) {}
-          URL.revokeObjectURL(video.src);
-          resolve(stats);
-        };
-        video.addEventListener('loadeddata', async () => {
-          try { await video.play(); } catch (_) {}
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const detector = await getDetector().catch(() => null);
-          if (!detector) return finish();
-          interval = setInterval(() => {
-            if (!video.videoWidth) return;
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            try {
-              ctx.drawImage(video, 0, 0);
-              const r = detector.detect(canvas);
-              stats.total += 1;
-              if (r.detections.length > 0) stats.withFace += 1;
-            } catch (_) {}
-          }, 700);
-          const cap = Math.min((isFinite(video.duration) ? video.duration : 5) * 1000 + 300, maxSeconds * 1000);
-          setTimeout(finish, cap);
-          video.addEventListener('ended', finish, { once: true });
-        });
-        video.addEventListener('error', finish);
-      });
-    }
-
-    videoFallback.addEventListener('change', async () => {
-      const f = videoFallback.files && videoFallback.files[0];
-      videoFallback.value = '';
-      if (!f) return;
-      if (!f.type.startsWith('video/')) return showErr(3, 'That file is not a video.');
-      // Duration window: 5–25 sec (loose since device camera has no auto-stop)
-      const probe = document.createElement('video');
-      probe.src = URL.createObjectURL(f);
-      probe.preload = 'metadata';
-      probe.muted = true;
-      probe.playsInline = true;
-      probe.addEventListener('loadedmetadata', async () => {
-        const dur = probe.duration;
-        if (!isFinite(dur) || dur < 4) return showErr(3, `Too short (${dur.toFixed(1)}s). Record around 10 seconds.`);
-        if (dur > 25) return showErr(3, `Too long (${dur.toFixed(1)}s). Keep it around 10 seconds.`);
-        // Show preview + run face check via play-and-sample
-        const url = URL.createObjectURL(f);
-        videoStage.innerHTML = `<video class="mf-saved-img" src="${url}" muted playsinline autoplay loop></video>`;
-        videoStage.classList.add('mf-video-stage--captured');
-        recordBtn.hidden = true;
-        videoDeviceBtn.hidden = true;
-        videoRetakeBtn.hidden = false;
-        setBusy(3, true, 'Checking for a face…');
-        const r = await detectFaceInBlobByPlay(f, Math.min(dur + 1, 8));
-        setBusy(3, false);
-        if (r.withFace < 1) {
-          showErr(3, "We couldn't find your face in the video. Tap Re-record and keep your face in view.");
-          captured.liveness_video = null;
-        } else {
-          captured.liveness_video = f;
-          clearErr(3);
-        }
-      });
-      probe.addEventListener('error', () => showErr(3, "Couldn't read that video. Try again."));
-    });
 
     // ============ Step validation + submit ============
     document.querySelector('[data-action="next-1"]').addEventListener('click', () => {

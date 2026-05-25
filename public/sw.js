@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v3';  // bump after Pages git-binding migration 2026-05-25 → forces installed PWAs to evict stale cache
+const CACHE = 'mainfeed-v4';  // bump 2026-05-25 → signup v17 (remove device-camera fallback, in-app recorder only)
 
 self.addEventListener('install', () => {
   self.skipWaiting();

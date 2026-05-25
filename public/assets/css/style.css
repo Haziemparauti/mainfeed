@@ -2027,6 +2027,11 @@ img, svg { display: block; max-width: 100%; }
   text-align: center;
   margin: 6px 0;
 }
+.mf-busy.mf-busy--ok {
+  color: #4ade80;
+  font-weight: 600;
+  font-size: 14px;
+}
 .mf-selfie-stage,
 .mf-video-stage {
   display: flex;
