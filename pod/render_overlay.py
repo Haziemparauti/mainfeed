@@ -39,14 +39,18 @@ import cairosvg
 CAPTION_FONT_PATH = "/app/assets/Anton.ttf"
 WATERMARK_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-# Watermark layout (top of frame, small + clean)
-WATERMARK_Y_PCT = 0.08
-WATERMARK_LOGO_PCT = 0.040   # logo height as fraction of video height
+# Watermark layout — channel-chip "pill" with gradient border (top-center)
+WATERMARK_Y_PCT = 0.12       # vertical center of pill (down from 8% to clear top safe-zone)
+WATERMARK_LOGO_PCT = 0.038   # logo height as fraction of video height
 WATERMARK_TEXT_PCT = 0.028   # watermark text height as fraction of video height
-WATERMARK_STROKE = 2
+WATERMARK_PILL_HORIZONTAL_PAD_PX = 14
+WATERMARK_PILL_VERTICAL_PAD_PX = 8
+WATERMARK_PILL_GAP_PX = 8            # gap between logo and text inside the pill
+WATERMARK_PILL_BORDER_PX = 2         # gradient stroke thickness around the pill
+WATERMARK_PILL_BG = (0, 0, 0, 165)   # semi-transparent black
 
-# Caption layout (moved down a bit + much smaller so the video shows through)
-CAPTION_Y_PCT = 0.16
+# Caption layout (sits just under the pill, multi-line meme font)
+CAPTION_Y_PCT = 0.18
 CAPTION_TEXT_PCT = 0.045     # caption text height as fraction of video height
 CAPTION_LINE_SPACING_PCT = 0.010
 CAPTION_STROKE = 3
@@ -87,6 +91,104 @@ def make_logo(size: int) -> Image.Image:
     """Return the logo downsampled to `size`×`size` with LANCZOS — sharp at any scale."""
     hi = _make_logo_hires()
     return hi.resize((size, size), Image.LANCZOS)
+
+
+# ============ gradient-bordered watermark pill ============
+
+def _interp_brand(t: float) -> Tuple[int, int, int]:
+    """Sample the 4-stop brand gradient at position t in [0, 1]."""
+    if t <= 0: return BRAND_COLORS[0]
+    if t >= 1: return BRAND_COLORS[-1]
+    n = len(BRAND_COLORS) - 1
+    seg = t * n
+    i = int(seg)
+    f = seg - i
+    a = BRAND_COLORS[i]
+    b = BRAND_COLORS[i + 1]
+    return (
+        int(a[0] * (1 - f) + b[0] * f),
+        int(a[1] * (1 - f) + b[1] * f),
+        int(a[2] * (1 - f) + b[2] * f),
+    )
+
+
+def _make_gradient_strip(width: int, height: int) -> Image.Image:
+    """Horizontal brand-gradient strip used as the pill's outer border source."""
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    px = img.load()
+    for x in range(width):
+        r, g, b = _interp_brand(x / max(1, width - 1))
+        for y in range(height):
+            px[x, y] = (r, g, b, 255)
+    return img
+
+
+def render_watermark_pill(handle: str, video_h: int) -> Image.Image:
+    """
+    Build a self-contained transparent RGBA pill: gradient-stroked rounded
+    rectangle, logo on left, "Mainfeed.app · @handle" text on right, all
+    centered vertically inside. Returns the pill image; caller positions it.
+    """
+    text = f"Mainfeed.app · @{handle}"
+    text_size = max(12, int(video_h * WATERMARK_TEXT_PCT))
+    logo_size = max(16, int(video_h * WATERMARK_LOGO_PCT))
+    font = ImageFont.truetype(WATERMARK_FONT_PATH, text_size)
+
+    # Measure text (Pillow gives advance width via textlength; height via the bbox)
+    tmp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    text_w = int(tmp_draw.textlength(text, font=font))
+    # Use ascent+descent for a stable text-block height across glyph sets
+    asc, desc = font.getmetrics()
+    text_h = asc + desc
+
+    inner_h = max(logo_size, text_h)
+    pad_x = WATERMARK_PILL_HORIZONTAL_PAD_PX
+    pad_y = WATERMARK_PILL_VERTICAL_PAD_PX
+    inner_w = logo_size + WATERMARK_PILL_GAP_PX + text_w
+    pill_w = inner_w + 2 * pad_x
+    pill_h = inner_h + 2 * pad_y
+    radius = pill_h // 2
+
+    pill = Image.new("RGBA", (pill_w, pill_h), (0, 0, 0, 0))
+
+    # === Gradient border: mask a brand-gradient strip with a ring (outer
+    # rounded-rect minus inner rounded-rect at -border_px), composite onto pill.
+    bp = WATERMARK_PILL_BORDER_PX
+    gradient = _make_gradient_strip(pill_w, pill_h)
+    ring_mask = Image.new("L", (pill_w, pill_h), 0)
+    rd = ImageDraw.Draw(ring_mask)
+    rd.rounded_rectangle((0, 0, pill_w - 1, pill_h - 1), radius=radius, fill=255)
+    rd.rounded_rectangle(
+        (bp, bp, pill_w - 1 - bp, pill_h - 1 - bp),
+        radius=max(1, radius - bp), fill=0,
+    )
+    pill.paste(gradient, (0, 0), ring_mask)
+
+    # === Black interior fill (inside the gradient ring)
+    interior = Image.new("RGBA", (pill_w, pill_h), (0, 0, 0, 0))
+    ImageDraw.Draw(interior).rounded_rectangle(
+        (bp, bp, pill_w - 1 - bp, pill_h - 1 - bp),
+        radius=max(1, radius - bp), fill=WATERMARK_PILL_BG,
+    )
+    pill = Image.alpha_composite(pill, interior)
+
+    # === Logo (left side, vertically centered)
+    logo = make_logo(logo_size)
+    logo_x = pad_x
+    logo_y = (pill_h - logo_size) // 2
+    pill.paste(logo, (logo_x, logo_y), logo)
+
+    # === Text (right of logo, vertically centered using font metrics — no stroke,
+    # the pill bg gives plenty of contrast)
+    text_x = pad_x + logo_size + WATERMARK_PILL_GAP_PX
+    # Y position: top-of-text such that the cap-height visually centers.
+    # PIL's textbaseline=top means y = (pill_h - text_h)/2 puts ascent at top —
+    # but we want optical centering, so offset by descent/2.
+    text_y = (pill_h - text_h) // 2 - desc // 4
+    draw = ImageDraw.Draw(pill)
+    draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 255))
+
+    return pill
 
 
 # ============ video probing ============
@@ -135,31 +237,12 @@ def render_overlay_png(video_w: int, video_h: int,
     img = Image.new("RGBA", (video_w, video_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # ===== Watermark row at Y=8% =====
+    # ===== Watermark pill (gradient-bordered black chip, top-center) =====
     if handle:
-        wm_text = f"Mainfeed.app · @{handle}"
-        wm_text_size = max(12, int(video_h * WATERMARK_TEXT_PCT))
-        wm_logo_size = max(16, int(video_h * WATERMARK_LOGO_PCT))
-        wm_font = ImageFont.truetype(WATERMARK_FONT_PATH, wm_text_size)
-        wm_text_w = draw.textlength(wm_text, font=wm_font)
-        gap = max(6, wm_logo_size // 4)
-        total_w = wm_logo_size + gap + int(wm_text_w)
-        wm_x0 = (video_w - total_w) // 2
-        wm_center_y = int(video_h * WATERMARK_Y_PCT)
-
-        logo = make_logo(wm_logo_size)
-        logo_y = wm_center_y - wm_logo_size // 2
-        img.paste(logo, (wm_x0, logo_y), logo)
-
-        text_y = wm_center_y - wm_text_size // 2
-        draw.text(
-            (wm_x0 + wm_logo_size + gap, text_y),
-            wm_text,
-            font=wm_font,
-            fill=(255, 255, 255, 255),
-            stroke_width=WATERMARK_STROKE,
-            stroke_fill=(0, 0, 0, 255),
-        )
+        pill = render_watermark_pill(handle, video_h)
+        pill_x = (video_w - pill.width) // 2
+        pill_y = int(video_h * WATERMARK_Y_PCT) - pill.height // 2
+        img.paste(pill, (pill_x, pill_y), pill)
 
     # ===== Caption at Y=16%, multi-line, uppercase, centered =====
     if caption:
