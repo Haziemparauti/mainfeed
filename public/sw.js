@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v2';
+const CACHE = 'mainfeed-v3';  // bump after Pages git-binding migration 2026-05-25 → forces installed PWAs to evict stale cache
 
 self.addEventListener('install', () => {
   self.skipWaiting();
