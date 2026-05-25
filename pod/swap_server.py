@@ -2,50 +2,39 @@
 """
 Mainfeed swap pod — REST server.
 
-Long-running process. Loads DreamID-V faster + DWPose once at startup, keeps them
-on GPU, serves POST /swap requests. Single-GPU, single-worker (DreamID-V is not
-thread-safe), serialized via asyncio.Lock.
+Long-running process. Pulls DreamID-V faster + Wan-2.1 + DWPose at startup,
+runs `generate_dreamidv_faster.py` (head+hair swap, body preserved) per request.
+Single GPU, serialized via asyncio.Lock (DreamID-V is not thread-safe).
 
 Endpoints:
-  POST /swap       — queue a swap job (returns 202 immediately, callbacks on done)
-  GET  /health     — liveness + model-loaded probe
-  GET  /metrics    — basic counters
+  POST /swap     — queue a swap job (returns 202, callbacks when done)
+  GET  /health   — liveness + model-loaded probe
+  GET  /metrics  — same as /health for now
 
-Request shape (POST /swap, JSON):
-  {
-    "request_id":         "unique-string",
-    "source_image_url":   "https://.../selfie.jpg",
-    "target_video_url":   "https://.../stock/cop_s07_coffee_plaza_f.mp4",
-    "target_pose_url":    null | "https://.../stock/cop_s07_coffee_plaza_f_pose.mp4",
-    "target_mask_url":    null | "https://.../stock/cop_s07_coffee_plaza_f_mask.mp4",
-    "callback_url":       "https://api.mainfeed.app/api/swap/complete",
-    "output_upload_url":  "https://r2.../signed-put-url-for-output.mp4",
-    "sample_steps":       16,
-    "sample_guide_scale_img": 4.0,
-    "size":               "832x480"
-  }
+Validated invocation (cop_s07_coffee_plaza_f + example1_512.jpg, 2026-05-25):
+  python generate_dreamidv_faster.py
+    --task swapface --size 832*480
+    --ckpt_dir /workspace/ckpts/wan2.1
+    --dreamidv_ckpt /workspace/ckpts/dreamidv_faster.pth
+    --ref_image source.jpg --ref_video target.mp4 --save_file output.mp4
+    --sample_steps 16 --sample_guide_scale_img 4.0 --base_seed 42
 
-If target_pose_url + target_mask_url are missing, the pod computes DWPose on-the-fly
-(~5–10 min extra). Production library prep precomputes pose+mask per stock clip,
-so production calls always pass the URLs and the pod skips that work.
-
-Auth: every protected endpoint requires `Authorization: Bearer $SWAP_POD_SECRET`.
+Auth: protected endpoints require `Authorization: Bearer $SWAP_POD_SECRET`.
 
 Environment:
-  SWAP_POD_SECRET   — shared with the Cloudflare Worker; required.
-  WEIGHTS_DIR       — where to cache model weights. Default /workspace/ckpts.
-  DREAMIDV_DIR      — where the DreamID-V repo is cloned. Default /root/dreamidv.
-  OUTPUT_DIR        — temp dir for per-request workdirs. Default /workspace/tmp.
-  PORT              — bind port. Default 8000.
-  HARDEN_WEIGHTS_R2 — if "1", download weights from R2_PUBLIC_PREFIX instead of HuggingFace.
-  R2_PUBLIC_PREFIX  — e.g. https://mainfeed-content.r2.cloudflarestorage.com/models.
+  SWAP_POD_SECRET    — shared bearer between worker and pod. Required.
+  WEIGHTS_DIR        — root for cached weights. Default /workspace/ckpts.
+  DREAMIDV_DIR       — DreamID-V repo checkout. Default /root/dreamidv.
+  OUTPUT_DIR         — per-request workdir parent. Default /workspace/tmp.
+  PORT               — bind port. Default 8000.
+  HF_TOKEN           — optional, only if the HF repos require auth.
+  DEBUG_KEEP_WORKDIR — "1" to retain workdirs after each swap (debugging).
 """
 
 from __future__ import annotations
 import asyncio
 import os
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -63,24 +52,12 @@ POD_SECRET = os.environ.get("SWAP_POD_SECRET", "")
 WEIGHTS_DIR = Path(os.environ.get("WEIGHTS_DIR", "/workspace/ckpts"))
 DREAMIDV_DIR = Path(os.environ.get("DREAMIDV_DIR", "/root/dreamidv"))
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/workspace/tmp"))
-HARDEN_R2 = os.environ.get("HARDEN_WEIGHTS_R2", "0") == "1"
-R2_PUBLIC_PREFIX = os.environ.get("R2_PUBLIC_PREFIX", "")
 PORT = int(os.environ.get("PORT", "8000"))
+HF_TOKEN = os.environ.get("HF_TOKEN", "") or None
 
-# === Weight manifest ===
-# Each entry: (local_relative_path, huggingface_repo, huggingface_file)
-# At startup, if HARDEN_R2=1 the URLs are replaced with $R2_PUBLIC_PREFIX/<filename>.
-WEIGHTS = [
-    ("dreamidv/dreamidv_faster.pth",      "XuGuo699/DreamID-V",     "dreamidv_faster.pth"),
-    ("wan2.1/Wan2.1_VAE.pth",             "Wan-AI/Wan2.1-T2V-1.3B", "Wan2.1_VAE.pth"),
-    ("wan2.1/models_t5_umt5-xxl-enc-bf16.pth",
-                                          "Wan-AI/Wan2.1-T2V-1.3B", "models_t5_umt5-xxl-enc-bf16.pth"),
-    ("wan2.1/diffusion_pytorch_model.safetensors",
-                                          "Wan-AI/Wan2.1-T2V-1.3B", "diffusion_pytorch_model.safetensors"),
-    ("wan2.1/config.json",                "Wan-AI/Wan2.1-T2V-1.3B", "config.json"),
-    ("dwpose/dw-ll_ucoco_384.onnx",       "yzd-v/DWPose",           "dw-ll_ucoco_384.onnx"),
-    ("dwpose/yolox_l.onnx",               "yzd-v/DWPose",           "yolox_l.onnx"),
-]
+DREAMIDV_FASTER_CKPT = WEIGHTS_DIR / "dreamidv_faster.pth"
+WAN21_DIR = WEIGHTS_DIR / "wan2.1"
+DWPOSE_DIR = DREAMIDV_DIR / "pose" / "models"
 
 
 # ============ state ============
@@ -93,6 +70,7 @@ class State:
         self.in_flight = 0
         self.total_completed = 0
         self.total_failed = 0
+        self.last_error: Optional[str] = None
 
 
 STATE = State()
@@ -104,60 +82,78 @@ class SwapRequest(BaseModel):
     request_id: str = Field(..., min_length=1, max_length=128)
     source_image_url: str
     target_video_url: str
+    # pose/mask URLs are kept in the schema for future compat with the dwpose
+    # variant; the FASTER variant computes pose internally and ignores them.
     target_pose_url: Optional[str] = None
     target_mask_url: Optional[str] = None
     callback_url: str
     output_upload_url: Optional[str] = None
     sample_steps: int = 16
     sample_guide_scale_img: float = 4.0
-    size: str = "832x480"
+    size: str = "832*480"   # DreamID-V uses asterisk-separated W*H
+    base_seed: int = 42
+    frame_num: Optional[int] = None  # default determined by DreamID-V if None
+
+
+# ============ weight download (HF) ============
+
+def ensure_weights() -> None:
+    """Download missing weights into WEIGHTS_DIR + DREAMIDV_DIR/pose/models."""
+    from huggingface_hub import hf_hub_download, snapshot_download
+
+    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    WAN21_DIR.mkdir(parents=True, exist_ok=True)
+    DWPOSE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1) DreamID-V faster checkpoint
+    if not DREAMIDV_FASTER_CKPT.exists() or DREAMIDV_FASTER_CKPT.stat().st_size < 1_000_000:
+        print("[ensure_weights] dreamidv_faster.pth", flush=True)
+        hf_hub_download(
+            repo_id="XuGuo699/DreamID-V",
+            filename="dreamidv_faster.pth",
+            local_dir=str(WEIGHTS_DIR),
+            local_dir_use_symlinks=False,
+            token=HF_TOKEN,
+        )
+
+    # 2) DWPose onnx models (placed inside repo dir, where DreamID-V looks)
+    for fname in ("dw-ll_ucoco_384.onnx", "yolox_l.onnx"):
+        dst = DWPOSE_DIR / fname
+        if not dst.exists() or dst.stat().st_size < 1_000_000:
+            print(f"[ensure_weights] {fname}", flush=True)
+            hf_hub_download(
+                repo_id="XuGuo699/DreamID-V",
+                filename=fname,
+                local_dir=str(DWPOSE_DIR),
+                local_dir_use_symlinks=False,
+                token=HF_TOKEN,
+            )
+
+    # 3) Wan-2.1-T2V-1.3B base model (the *.pth, *.safetensors, config.json + google/ tokenizer)
+    sentinel = WAN21_DIR / "models_t5_umt5-xxl-enc-bf16.pth"
+    if not sentinel.exists() or sentinel.stat().st_size < 1_000_000_000:
+        print("[ensure_weights] Wan-2.1-T2V-1.3B (snapshot, only required files)", flush=True)
+        snapshot_download(
+            repo_id="Wan-AI/Wan2.1-T2V-1.3B",
+            local_dir=str(WAN21_DIR),
+            local_dir_use_symlinks=False,
+            allow_patterns=[
+                "*.pth",
+                "*.safetensors",
+                "config.json",
+                "google/**",
+            ],
+            token=HF_TOKEN,
+        )
+
+    print("[ensure_weights] all weights present", flush=True)
 
 
 # ============ helpers ============
 
-def hf_url(repo: str, filename: str) -> str:
-    return f"https://huggingface.co/{repo}/resolve/main/{filename}"
-
-
-def r2_url(filename: str) -> str:
-    if not R2_PUBLIC_PREFIX:
-        raise RuntimeError("HARDEN_WEIGHTS_R2=1 but R2_PUBLIC_PREFIX not set")
-    return f"{R2_PUBLIC_PREFIX.rstrip('/')}/{Path(filename).name}"
-
-
-def ensure_weights() -> None:
-    """Download model weights at startup if not present locally."""
-    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
-    for rel_path, hf_repo, hf_file in WEIGHTS:
-        local = WEIGHTS_DIR / rel_path
-        if local.exists() and local.stat().st_size > 1024:
-            continue
-        local.parent.mkdir(parents=True, exist_ok=True)
-        url = r2_url(hf_file) if HARDEN_R2 else hf_url(hf_repo, hf_file)
-        print(f"[swap_server] downloading {rel_path}  ({url})", flush=True)
-        rc = subprocess.run(
-            ["wget", "-q", "--show-progress", url, "-O", str(local)],
-            check=False,
-        ).returncode
-        if rc != 0 or local.stat().st_size < 1024:
-            raise RuntimeError(f"failed to download {rel_path} from {url}")
-
-
-def load_model() -> None:
-    """Verify DreamID-V CLI is importable. Heavy lifting happens at first invocation;
-    keeping the process warm + reusing the python interpreter is what saves the
-    30-sec model load on subsequent swaps. For now we keep this lightweight and
-    rely on subprocess invocation per swap; a future optimization is to import
-    generate_dreamidv_faster as a module and hold the model in-process."""
-    script = DREAMIDV_DIR / "generate_dreamidv_faster.py"
-    if not script.exists():
-        raise RuntimeError(f"DreamID-V script not found at {script}")
-    STATE.model_loaded = True
-
-
 async def download_to(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
         async with client.stream("GET", url) as resp:
             resp.raise_for_status()
             with open(dest, "wb") as f:
@@ -189,31 +185,29 @@ async def callback(callback_url: str, payload: dict) -> None:
 # ============ inference ============
 
 async def run_dreamidv(workdir: Path, src_image: Path, ref_video: Path,
-                       pose_video: Optional[Path], mask_video: Optional[Path],
-                       sample_steps: int, sample_guide_scale_img: float, size: str
-                       ) -> Path:
+                       sample_steps: int, sample_guide_scale_img: float,
+                       size: str, base_seed: int, frame_num: Optional[int]) -> Path:
     """Invoke generate_dreamidv_faster.py with the validated argset."""
     output = workdir / "output.mp4"
     cmd = [
         sys.executable,
         str(DREAMIDV_DIR / "generate_dreamidv_faster.py"),
-        "--src_image", str(src_image),
+        "--task", "swapface",
+        "--size", size,
+        "--ckpt_dir", str(WAN21_DIR),
+        "--dreamidv_ckpt", str(DREAMIDV_FASTER_CKPT),
+        "--ref_image", str(src_image),
         "--ref_video", str(ref_video),
-        "--save_path", str(output),
+        "--save_file", str(output),
         "--sample_steps", str(sample_steps),
         "--sample_guide_scale_img", str(sample_guide_scale_img),
-        "--size", size,
-        # checkpoints
-        "--dit_checkpoint",  str(WEIGHTS_DIR / "dreamidv" / "dreamidv_faster.pth"),
-        "--wan_checkpoint_dir", str(WEIGHTS_DIR / "wan2.1"),
-        "--pose_model",      str(WEIGHTS_DIR / "dwpose" / "dw-ll_ucoco_384.onnx"),
-        "--yolox_model",     str(WEIGHTS_DIR / "dwpose" / "yolox_l.onnx"),
+        "--base_seed", str(base_seed),
     ]
-    if pose_video and pose_video.exists():
-        cmd.extend(["--ref_pose_video", str(pose_video)])
-    if mask_video and mask_video.exists():
-        cmd.extend(["--ref_mask_video", str(mask_video)])
+    if frame_num is not None:
+        cmd.extend(["--frame_num", str(frame_num)])
+
     print(f"[swap_server] running: {' '.join(cmd)}", flush=True)
+    started = time.time()
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         cwd=str(DREAMIDV_DIR),
@@ -222,10 +216,13 @@ async def run_dreamidv(workdir: Path, src_image: Path, ref_video: Path,
     )
     stdout, _ = await proc.communicate()
     log = stdout.decode("utf-8", errors="ignore") if stdout else ""
+    elapsed = round(time.time() - started, 2)
     if proc.returncode != 0:
-        raise RuntimeError(f"DreamID-V failed (rc={proc.returncode}):\n{log[-2000:]}")
+        STATE.last_error = log[-2000:]
+        raise RuntimeError(f"DreamID-V exited rc={proc.returncode} ({elapsed}s):\n{log[-2000:]}")
     if not output.exists():
-        raise RuntimeError(f"DreamID-V exited 0 but no output at {output}:\n{log[-2000:]}")
+        raise RuntimeError(f"DreamID-V exited 0 ({elapsed}s) but no output at {output}:\n{log[-2000:]}")
+    print(f"[swap_server] DreamID-V finished in {elapsed}s, output {output.stat().st_size} bytes", flush=True)
     return output
 
 
@@ -234,21 +231,16 @@ async def run_swap(req: SwapRequest) -> None:
     workdir.mkdir(parents=True, exist_ok=True)
     src_image = workdir / "source.jpg"
     ref_video = workdir / "target.mp4"
-    pose_video = workdir / "pose.mp4" if req.target_pose_url else None
-    mask_video = workdir / "mask.mp4" if req.target_mask_url else None
     started = time.time()
     try:
         await download_to(req.source_image_url, src_image)
         await download_to(req.target_video_url, ref_video)
-        if req.target_pose_url:
-            await download_to(req.target_pose_url, pose_video)  # type: ignore[arg-type]
-        if req.target_mask_url:
-            await download_to(req.target_mask_url, mask_video)  # type: ignore[arg-type]
-
+        # pose/mask are ignored for the FASTER variant; keep schema for compat
         async with STATE.gpu_lock:
             output = await run_dreamidv(
-                workdir, src_image, ref_video, pose_video, mask_video,
-                req.sample_steps, req.sample_guide_scale_img, req.size,
+                workdir, src_image, ref_video,
+                req.sample_steps, req.sample_guide_scale_img,
+                req.size, req.base_seed, req.frame_num,
             )
 
         if req.output_upload_url:
@@ -261,19 +253,20 @@ async def run_swap(req: SwapRequest) -> None:
             "status": "completed",
             "elapsed_sec": elapsed,
             "output_uploaded": bool(req.output_upload_url),
+            "output_bytes": output.stat().st_size if output.exists() else 0,
         })
-        print(f"[swap_server] {req.request_id} done in {elapsed}s", flush=True)
+        print(f"[swap_server] {req.request_id} OK in {elapsed}s", flush=True)
     except Exception as e:
         STATE.total_failed += 1
-        print(f"[swap_server] {req.request_id} failed: {e}", flush=True)
+        msg = str(e)[:1500]
+        print(f"[swap_server] {req.request_id} FAILED: {msg}", flush=True)
         await callback(req.callback_url, {
             "request_id": req.request_id,
             "status": "failed",
-            "error": str(e)[:1000],
+            "error": msg,
         })
     finally:
         STATE.in_flight -= 1
-        # Keep workdir for debugging if env DEBUG_KEEP_WORKDIR=1
         if os.environ.get("DEBUG_KEEP_WORKDIR", "0") != "1":
             shutil.rmtree(workdir, ignore_errors=True)
 
@@ -295,8 +288,14 @@ def require_auth(authorization: str) -> None:
 @app.on_event("startup")
 async def on_startup() -> None:
     print("[swap_server] starting up...", flush=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ensure_weights()
-    load_model()
+    # Light sanity-check on the inference script — actual model load happens
+    # in the subprocess on the first /swap call (warm cache afterwards).
+    script = DREAMIDV_DIR / "generate_dreamidv_faster.py"
+    if not script.exists():
+        raise RuntimeError(f"DreamID-V script missing at {script}")
+    STATE.model_loaded = True
     print(f"[swap_server] ready on port {PORT}", flush=True)
 
 
@@ -309,6 +308,7 @@ async def health() -> dict:
         "completed": STATE.total_completed,
         "failed": STATE.total_failed,
         "uptime_sec": round(time.time() - STATE.started_at, 2),
+        "last_error": STATE.last_error,
     }
 
 

@@ -1547,7 +1547,8 @@ async function handleAdminSwapQueue(request, env, origin) {
     sample_steps: Number.isFinite(body.sample_steps) ? Number(body.sample_steps) : 16,
     sample_guide_scale_img: Number.isFinite(body.sample_guide_scale_img)
       ? Number(body.sample_guide_scale_img) : 4.0,
-    size: typeof body.size === 'string' ? body.size : '832x480',
+    // DreamID-V argparse only accepts 832*480 / 480*832 / 720*1280 / 1280*720 / 1024*1024 (asterisk-separated).
+    size: typeof body.size === 'string' ? body.size : '832*480',
   };
 
   const podUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';

@@ -21,10 +21,11 @@ RUN apt-get update -qq && apt-get install -y -qq \
     && rm -rf /var/lib/apt/lists/*
 
 # === Clone DreamID-V at pinned commit ===
-# Pin to a specific commit SHA once the Haziemparauti fork is set up (see pod/README.md Phase 1A).
-# For now this pulls the upstream main branch; lock the SHA before any production deploy.
-ARG DREAMIDV_REPO=https://github.com/bytedance/DreamID-V.git
-ARG DREAMIDV_SHA=main
+# Source: Haziemparauti/DreamID-V (fork of bytedance/DreamID-V) — pinned to the
+# exact commit validated on 2026-05-25 against cop_s07_coffee_plaza_f. Fork
+# insulates the production build from upstream rebase / delete / license shift.
+ARG DREAMIDV_REPO=https://github.com/Haziemparauti/DreamID-V.git
+ARG DREAMIDV_SHA=9b589940577559c91481fb3a13bae000a55f97a1
 RUN git clone $DREAMIDV_REPO /root/dreamidv \
     && cd /root/dreamidv && git checkout $DREAMIDV_SHA
 
