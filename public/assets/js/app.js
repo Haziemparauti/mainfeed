@@ -52,6 +52,9 @@ function paintMe(user) {
   if (menuEmail && user?.email) menuEmail.textContent = user.email;
   const publicLink = $('#mf-menu-public-profile');
   if (publicLink && user?.handle) publicLink.href = '/@' + user.handle;
+  // Show the "Verify your account" menu item only for unverified users.
+  const verifyItem = $('#mf-menu-verify-item');
+  if (verifyItem) verifyItem.hidden = !!user?.verified;
 }
 
 // ============ App menu drawer (logout etc.) ============
@@ -172,6 +175,13 @@ document.addEventListener('click', async (e) => {
 
 async function togglePublish(id, card, btn) {
   const isPublic = card.dataset.public === '1';
+  // Going public requires liveness verification. Open the verify modal
+  // first if the user hasn't verified yet — we only ship the publish
+  // request once they're verified (or they bail out).
+  if (!isPublic && !currentUser?.verified) {
+    const verified = await runVerifyFlow();
+    if (!verified) return;
+  }
   setBusy(btn, isPublic ? 'Unpublishing…' : 'Publishing…');
   try {
     const res = await fetch(`${API}/api/piece/${id}/${isPublic ? 'unpublish' : 'publish'}`, {
@@ -180,6 +190,14 @@ async function togglePublish(id, card, btn) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      // Server-side belt-and-suspenders for the verify gate: if for any
+      // reason the local state was stale, refresh user + re-open verify.
+      if (data.error === 'verification_required') {
+        await refreshMe();
+        const ok = await runVerifyFlow();
+        if (ok) return togglePublish(id, card, btn);
+        return;
+      }
       alert('Failed: ' + (data.error || 'unknown'));
       return;
     }
@@ -193,6 +211,17 @@ async function togglePublish(id, card, btn) {
   } finally {
     setBusy(btn, null);
   }
+}
+
+async function refreshMe() {
+  try {
+    const res = await fetch(`${API}/api/me`, { credentials: 'include' });
+    if (res.ok) {
+      const data = await res.json();
+      currentUser = data.user;
+      paintMe(currentUser);
+    }
+  } catch (_) {}
 }
 
 function showToast(msg) {
@@ -353,6 +382,246 @@ function drawWatermark(ctx, w, h, text) {
   ctx.strokeText(text, w - padX, h - padY);
   ctx.fillText(text, w - padX, h - padY);
 }
+
+// ============ Verify-account flow (10-sec record + face check + upload) ============
+// Lazy-loaded MediaPipe BlazeFace detector — same model as signup used to use.
+let _verifyDetector = null;
+let _verifyDetectorPromise = null;
+async function getVerifyDetector() {
+  if (_verifyDetector) return _verifyDetector;
+  if (_verifyDetectorPromise) return _verifyDetectorPromise;
+  _verifyDetectorPromise = (async () => {
+    const mod = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs');
+    const { FaceDetector, FilesetResolver } = mod;
+    const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm');
+    _verifyDetector = await FaceDetector.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+      },
+      runningMode: 'IMAGE',
+      minDetectionConfidence: 0.5,
+    });
+    return _verifyDetector;
+  })();
+  return _verifyDetectorPromise;
+}
+
+// Opens the verify modal and resolves to `true` if the user successfully
+// records + uploads the verification video, `false` if they bail.
+async function runVerifyFlow() {
+  const modal = $('#mf-verify-modal');
+  const panelIntro = $('#mf-verify-panel-intro');
+  const panelBlocked = $('#mf-verify-panel-blocked');
+  const panelRec = $('#mf-verify-panel-rec');
+  const panelDone = $('#mf-verify-panel-done');
+  const closeBtn = $('#mf-verify-close');
+  const startBtn = $('#mf-verify-start');
+  const retryBtn = $('#mf-verify-retry');
+  const doneCloseBtn = $('#mf-verify-done-close');
+  const video = $('#mf-verify-video');
+  const hint = $('#mf-verify-hint');
+  const countdown = $('#mf-verify-countdown');
+  const badge = $('#mf-verify-badge');
+  const doneTitle = $('#mf-verify-done-title');
+  const doneMsg = $('#mf-verify-done-msg');
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    let stream = null;
+    let recorder = null;
+    let recTimer = null;
+    let faceSampleTimer = null;
+    let faceSampleStats = { total: 0, withFace: 0 };
+
+    function showPanel(name) {
+      panelIntro.hidden = name !== 'intro';
+      panelBlocked.hidden = name !== 'blocked';
+      panelRec.hidden = name !== 'rec';
+      panelDone.hidden = name !== 'done';
+    }
+
+    function cleanupStream() {
+      if (recTimer) { clearInterval(recTimer); recTimer = null; }
+      if (faceSampleTimer) { clearInterval(faceSampleTimer); faceSampleTimer = null; }
+      try { recorder && recorder.state !== 'inactive' && recorder.stop(); } catch (_) {}
+      recorder = null;
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+        stream = null;
+      }
+      video.srcObject = null;
+    }
+
+    function closeModal(success) {
+      if (resolved) return;
+      resolved = true;
+      cleanupStream();
+      modal.hidden = true;
+      modal.setAttribute('aria-hidden', 'true');
+      resolve(!!success);
+    }
+
+    function showBlocked() {
+      const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+      const stepsEl = $('#mf-verify-blocked-steps');
+      stepsEl.innerHTML = isStandalone
+        ? `<li>Open <b>mainfeed.app</b> in <b>Chrome</b> (not this installed app)</li>
+           <li>Tap the <b>🔒 lock icon</b> at the LEFT of the address bar</li>
+           <li>Tap <b>Permissions</b> → <b>Camera</b> → <b>Allow</b></li>
+           <li>Come back here and tap <b>Try again</b></li>`
+        : `<li>Tap the <b>🔒 lock icon</b> at the LEFT of the address bar</li>
+           <li>Tap <b>Permissions</b> → <b>Camera</b></li>
+           <li>Change <b>Block</b> → <b>Allow</b></li>
+           <li>Tap <b>Try again</b> below</li>`;
+      showPanel('blocked');
+    }
+
+    async function startRecording() {
+      showPanel('rec');
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 } },
+          audio: false,
+        });
+      } catch (err) {
+        const name = (err && err.name) || 'unknown';
+        if (name === 'NotAllowedError' || name === 'SecurityError') return showBlocked();
+        alert(`Camera unavailable (${name}). Reload and try again.`);
+        showPanel('intro');
+        return;
+      }
+      video.srcObject = stream;
+      try { await video.play(); } catch (_) {}
+      hint.hidden = false;
+      hint.textContent = 'Get ready…';
+      countdown.hidden = false;
+      countdown.classList.remove('mf-cam-countdown--rec');
+      badge.hidden = true;
+
+      // 3-2-1 pre-countdown
+      for (let pre = 3; pre > 0; pre--) {
+        countdown.textContent = pre;
+        await new Promise((r) => setTimeout(r, 1000));
+        if (resolved) return;
+      }
+
+      hint.hidden = true;
+      badge.hidden = false;
+      countdown.classList.add('mf-cam-countdown--rec');
+
+      const chunks = [];
+      const candidates = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      let mime = '';
+      for (const c of candidates) if (MediaRecorder.isTypeSupported(c)) { mime = c; break; }
+      try {
+        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      } catch (err) {
+        alert('This browser cannot record video. Open Mainfeed in Chrome and try again.');
+        cleanupStream();
+        showPanel('intro');
+        return;
+      }
+      recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); });
+      recorder.addEventListener('stop', async () => {
+        const blob = new Blob(chunks, { type: mime || 'video/webm' });
+        const stats = { ...faceSampleStats };
+        cleanupStream();
+        if (stats.withFace < 1) {
+          alert("We couldn't find your face in the recording. Try again with your face clearly in frame.");
+          showPanel('intro');
+          return;
+        }
+        // Upload to /api/verify-identity
+        showPanel('done');
+        doneTitle.textContent = 'Uploading…';
+        doneMsg.textContent = 'Saving your verification video.';
+        try {
+          const ext = mime && mime.includes('mp4') ? 'mp4' : mime && mime.includes('webm') ? 'webm' : 'mp4';
+          const fd = new FormData();
+          fd.append('liveness_video', blob, `liveness.${ext}`);
+          const res = await fetch(`${API}/api/verify-identity`, {
+            method: 'POST',
+            body: fd,
+            credentials: 'include',
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            doneTitle.textContent = '❌ Verification failed';
+            doneMsg.textContent = `Couldn't save (${data.error || res.status}). Tap Close and try again.`;
+            doneCloseBtn.textContent = 'Close';
+            return;
+          }
+          doneTitle.textContent = '✓ Verified';
+          doneMsg.textContent = 'Your account is verified — you can publish to your public profile now.';
+          await refreshMe();
+          doneCloseBtn.textContent = 'Continue';
+          // Mark this run as successful — closing the modal will resolve true.
+          doneCloseBtn.dataset.success = '1';
+        } catch (err) {
+          doneTitle.textContent = '❌ Network error';
+          doneMsg.textContent = 'Check your connection and try again.';
+        }
+      });
+      recorder.start();
+
+      // Live face sampling every 1.2s — same approach as signup used.
+      faceSampleStats = { total: 0, withFace: 0 };
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      faceSampleTimer = setInterval(async () => {
+        if (!video.videoWidth) return;
+        try {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          const detector = await getVerifyDetector();
+          const r = detector.detect(canvas);
+          faceSampleStats.total += 1;
+          if (r.detections.length > 0) faceSampleStats.withFace += 1;
+        } catch (_) {}
+      }, 1200);
+
+      // 10-sec countdown then auto-stop
+      let left = 10;
+      countdown.textContent = left;
+      recTimer = setInterval(() => {
+        left -= 1;
+        if (left <= 0) {
+          clearInterval(recTimer); recTimer = null;
+          countdown.textContent = '0';
+          try { recorder.stop(); } catch (_) {}
+        } else {
+          countdown.textContent = left;
+        }
+      }, 1000);
+    }
+
+    // Wire local listeners (re-bound each open; we tear them down on close)
+    const onClose = () => closeModal(doneCloseBtn.dataset.success === '1');
+    const onStart = () => startRecording();
+    const onRetry = () => startRecording();
+    const onDoneClose = () => closeModal(doneCloseBtn.dataset.success === '1');
+
+    closeBtn.addEventListener('click', onClose, { once: true });
+    startBtn.addEventListener('click', onStart, { once: true });
+    retryBtn.addEventListener('click', onRetry, { once: true });
+    doneCloseBtn.addEventListener('click', onDoneClose, { once: true });
+
+    // Reset state + open
+    doneCloseBtn.dataset.success = '';
+    doneCloseBtn.textContent = 'Close';
+    showPanel('intro');
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+  });
+}
+
+// Wire "Verify your account" menu link
+$('#mf-menu-verify')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  if (appMenu) appMenu.hidden = true;
+  await runVerifyFlow();
+});
 
 // Service worker
 if ('serviceWorker' in navigator) {

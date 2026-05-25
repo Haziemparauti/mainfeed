@@ -6,21 +6,21 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=21" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=21" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=22" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=22" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=21" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=21" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=22" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=22" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
   <main class="mf-form-wrap">
     <div class="mf-progress" data-step="1">
-      <span></span><span></span><span></span><span></span>
+      <span></span><span></span><span></span>
     </div>
 
     <form id="mf-signup-form" enctype="multipart/form-data" novalidate>
@@ -121,38 +121,8 @@
         <button class="mf-back-bottom" type="button" data-back="1">← Back</button>
       </section>
 
-      <!-- ============ Step 3: custom 10-sec recorder + live face detection ============ -->
+      <!-- ============ Step 3: consents + submit ============ -->
       <section class="mf-step" data-step="3" hidden>
-        <h1>10-second video of you</h1>
-        <p class="mf-sub">Slowly turn your head left and right. Auto-stops at 10 seconds.</p>
-
-        <p class="mf-busy" id="mf-cam-help" hidden></p>
-
-        <div class="mf-cam-blocked" id="mf-cam-blocked" hidden>
-          <div class="mf-cam-blocked-title">⚠️ Camera blocked for this site</div>
-          <p class="mf-cam-blocked-body">Mainfeed needs your camera to record the 10-second video. Chrome won't ask again because you (or someone) previously blocked it. Unblock it now:</p>
-          <ol id="mf-cam-blocked-steps"></ol>
-          <button type="button" class="mf-cta mf-cta-block" id="mf-cam-retry">Try again</button>
-        </div>
-
-        <div class="mf-video-card">
-          <div class="mf-video-stage" id="mf-video-stage">
-            <span class="mf-stage-icon">🎥</span>
-          </div>
-          <button type="button" class="mf-btn-action mf-btn-action--primary" id="mf-video-record-btn">
-            <span class="mf-red-dot"></span> Start recording
-          </button>
-          <button type="button" class="mf-link-retake" id="mf-video-retake" hidden>Re-record</button>
-        </div>
-
-        <p class="mf-busy" id="mf-busy-3" hidden>Checking for a face…</p>
-        <p class="mf-err" id="mf-err-3" hidden></p>
-        <button class="mf-cta mf-cta-block" type="button" data-action="next-3">Continue</button>
-        <button class="mf-back-bottom" type="button" data-back="2">← Back</button>
-      </section>
-
-      <!-- ============ Step 4: consents + submit ============ -->
-      <section class="mf-step" data-step="4" hidden>
         <h1>One last thing</h1>
         <p class="mf-sub">Two quick agreements and your Mainfeed goes live.</p>
 
@@ -165,9 +135,9 @@
           <span>I agree to the <a href="/terms.html">Terms</a> (AI generation of my likeness in my private feed) and <a href="/privacy.html">Privacy</a>.</span>
         </label>
 
-        <p class="mf-err" id="mf-err-4" hidden></p>
+        <p class="mf-err" id="mf-err-3" hidden></p>
         <button id="mf-submit" class="mf-cta mf-cta-block" type="submit">Create my Mainfeed</button>
-        <button class="mf-back-bottom" type="button" data-back="3">← Back</button>
+        <button class="mf-back-bottom" type="button" data-back="2">← Back</button>
       </section>
 
     </form>
@@ -182,28 +152,15 @@
     </section>
   </main>
 
-  <!-- ============ Custom 10-sec recorder modal (auto-starts on open) ============ -->
-  <div class="mf-cam-modal" id="mf-rec-modal" hidden aria-hidden="true">
-    <video class="mf-cam-video" id="mf-rec-video" playsinline muted autoplay></video>
-    <div class="mf-cam-hint" id="mf-rec-hint">Get ready…</div>
-    <div class="mf-cam-countdown" id="mf-rec-countdown" hidden></div>
-    <div class="mf-cam-rec-badge" id="mf-rec-badge" hidden>● REC</div>
-    <div class="mf-cam-controls">
-      <button type="button" class="mf-cam-cancel" id="mf-rec-cancel" aria-label="Cancel">✕</button>
-      <div style="width:76px"></div>
-      <div style="width:44px"></div>
-    </div>
-  </div>
-
   <script type="module">
     const API = location.hostname === 'localhost' ? 'http://localhost:8787' : 'https://api.mainfeed.app';
     const form = document.getElementById('mf-signup-form');
     const submitBtn = document.getElementById('mf-submit');
     const progress = document.querySelector('.mf-progress');
 
-    const STEPS = 4;
+    const STEPS = 3;
     let currentStep = 1;
-    const captured = { selfie_0: null, selfie_1: null, liveness_video: null };
+    const captured = { selfie_0: null, selfie_1: null };
 
     function showStep(step, pushHistory = true) {
       currentStep = step;
@@ -213,10 +170,6 @@
       progress.dataset.step = String(step);
       if (pushHistory) history.pushState({ step }, '', `#step-${step}`);
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      // Eagerly probe camera permission as soon as we land on step 3 so the
-      // user sees Chrome's permission prompt right away — not when they tap
-      // Start recording, by which point a previous denial silently blocks it.
-      if (step === 3 && !captured.liveness_video) probeCameraPermission();
     }
     const hashStep = parseInt((location.hash.match(/^#step-(\d+)/) || [])[1] || '1', 10);
     showStep(Math.max(1, Math.min(STEPS, hashStep)), false);
@@ -345,268 +298,6 @@
     });
     document.querySelectorAll('[data-retake]').forEach((b) => b.addEventListener('click', () => resetSelfie(Number(b.dataset.retake))));
 
-    // ============ Step 3: Custom 10-sec recorder w/ LIVE face detection ============
-    const recModal = document.getElementById('mf-rec-modal');
-    const recVideo = document.getElementById('mf-rec-video');
-    const recCancel = document.getElementById('mf-rec-cancel');
-    const recCountdown = document.getElementById('mf-rec-countdown');
-    const recBadge = document.getElementById('mf-rec-badge');
-    const recHint = document.getElementById('mf-rec-hint');
-    const recordBtn = document.getElementById('mf-video-record-btn');
-    const videoRetakeBtn = document.getElementById('mf-video-retake');
-    const videoStage = document.getElementById('mf-video-stage');
-
-    const REC_DURATION_SEC = 10;
-    let recStream = null;
-    let recorder = null;
-    let recTimer = null;
-    let faceSampleTimer = null;
-    let faceSampleStats = { total: 0, withFace: 0 };
-
-    function stopStream(s) { if (s) s.getTracks().forEach((t) => t.stop()); }
-
-    // Live face sampling during recording: every ~1.2s draw the current camera
-    // frame to a canvas and run MediaPipe on it. We sample from the LIVE
-    // <video> element (not from the saved blob), so timing/seeking is never an
-    // issue. Reliable across Android/iOS/desktop.
-    function startLiveFaceSampling() {
-      faceSampleStats = { total: 0, withFace: 0 };
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      faceSampleTimer = setInterval(async () => {
-        if (!recVideo.videoWidth) return;
-        try {
-          canvas.width = recVideo.videoWidth;
-          canvas.height = recVideo.videoHeight;
-          ctx.drawImage(recVideo, 0, 0);
-          const detector = await getDetector();
-          const result = detector.detect(canvas);
-          faceSampleStats.total += 1;
-          if (result.detections.length > 0) faceSampleStats.withFace += 1;
-        } catch (_) { /* ignore individual sample failures */ }
-      }, 1200);
-    }
-    function stopLiveFaceSampling() {
-      if (faceSampleTimer) { clearInterval(faceSampleTimer); faceSampleTimer = null; }
-    }
-
-    function setVideoCaptured(blob, faceFrames) {
-      const url = URL.createObjectURL(blob);
-      videoStage.innerHTML = `<video class="mf-saved-img" src="${url}" muted playsinline autoplay loop></video>`;
-      videoStage.classList.add('mf-video-stage--captured');
-      recordBtn.hidden = true;
-      videoRetakeBtn.hidden = false;
-      const busyEl = document.getElementById('mf-busy-3');
-      if (faceFrames > 0) {
-        captured.liveness_video = blob;
-        clearErr(3);
-        busyEl.hidden = false;
-        busyEl.textContent = '✓ Face detected — tap Continue';
-        busyEl.classList.add('mf-busy--ok');
-      } else {
-        captured.liveness_video = null;
-        busyEl.hidden = true;
-        busyEl.classList.remove('mf-busy--ok');
-        showErr(3, "We couldn't find your face in the video. Re-record with your face clearly in frame.");
-      }
-    }
-
-    function resetVideo() {
-      captured.liveness_video = null;
-      videoStage.innerHTML = '<span class="mf-stage-icon">🎥</span>';
-      videoStage.classList.remove('mf-video-stage--captured');
-      recordBtn.hidden = false;
-      videoRetakeBtn.hidden = true;
-      const busyEl = document.getElementById('mf-busy-3');
-      busyEl.hidden = true;
-      busyEl.classList.remove('mf-busy--ok');
-      clearErr(3);
-    }
-    videoRetakeBtn.addEventListener('click', resetVideo);
-
-    function closeRecorderModal() {
-      recModal.hidden = true;
-      recModal.setAttribute('aria-hidden', 'true');
-      if (recTimer) { clearInterval(recTimer); recTimer = null; }
-      stopLiveFaceSampling();
-      try { recorder && recorder.state !== 'inactive' && recorder.stop(); } catch (_) {}
-      recorder = null;
-      stopStream(recStream); recStream = null;
-      recVideo.srcObject = null;
-    }
-    recCancel.addEventListener('click', closeRecorderModal);
-
-    async function openRecorderFlow() {
-      clearErr(3);
-      // Hide the "Camera ready" hint — we're moving past it now.
-      const helpEl = document.getElementById('mf-cam-help');
-      helpEl.hidden = true;
-      helpEl.classList.remove('mf-busy--ok');
-
-      try {
-        recStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 } },
-          audio: false,
-        });
-      } catch (err) {
-        // If we got here the upfront probe should have already caught a denial,
-        // but handle the edge case (user revoked permission between step entry
-        // and Start recording tap).
-        const name = (err && err.name) || 'unknown';
-        if (name === 'NotAllowedError' || name === 'SecurityError') {
-          showBlockedBanner();
-        } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-          showErr(3, 'No front camera detected on this device.');
-        } else if (name === 'NotReadableError') {
-          showErr(3, 'Camera is in use by another app. Close camera apps and try again.');
-        } else {
-          showErr(3, `Camera unavailable (${name}). Reload and try again.`);
-        }
-        return;
-      }
-      recVideo.srcObject = recStream;
-      try { await recVideo.play(); } catch (_) {}
-      recModal.hidden = false;
-      recModal.setAttribute('aria-hidden', 'false');
-      recHint.hidden = false;
-      recHint.textContent = 'Get ready…';
-      recCountdown.hidden = false;
-      recCountdown.classList.remove('mf-cam-countdown--rec');
-      recBadge.hidden = true;
-
-      // Auto-start the flow: 3-2-1 pre-countdown, then begin 10-sec record.
-      // No second tap required.
-      for (let pre = 3; pre > 0; pre--) {
-        recCountdown.textContent = pre;
-        await new Promise((r) => setTimeout(r, 1000));
-        if (recModal.hidden) return;  // user cancelled
-      }
-      await startRecording();
-    }
-
-    async function startRecording() {
-      if (!recStream || recModal.hidden) return;
-      recHint.hidden = true;
-      recBadge.hidden = false;
-      recCountdown.classList.add('mf-cam-countdown--rec');
-
-      const chunks = [];
-      const candidates = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-      let mime = '';
-      for (const c of candidates) if (MediaRecorder.isTypeSupported(c)) { mime = c; break; }
-      try {
-        recorder = new MediaRecorder(recStream, mime ? { mimeType: mime } : undefined);
-      } catch (err) {
-        closeRecorderModal();
-        showErr(3, 'This browser cannot record video. Open mainfeed.app in Chrome and try again.');
-        return;
-      }
-      recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); });
-      recorder.addEventListener('stop', () => {
-        const blob = new Blob(chunks, { type: mime || 'video/webm' });
-        const stats = { ...faceSampleStats };
-        stopLiveFaceSampling();
-        closeRecorderModal();
-        setVideoCaptured(blob, stats.withFace);
-      });
-      recorder.start();
-      startLiveFaceSampling();
-
-      let left = REC_DURATION_SEC;
-      recCountdown.textContent = left;
-      recTimer = setInterval(() => {
-        left -= 1;
-        if (left <= 0) {
-          clearInterval(recTimer); recTimer = null;
-          recCountdown.textContent = '0';
-          try { recorder.stop(); } catch (_) {}
-        } else {
-          recCountdown.textContent = left;
-        }
-      }, 1000);
-    }
-    recordBtn.addEventListener('click', openRecorderFlow);
-
-    // ============ Eager camera permission probe on step 3 entry ============
-    // Trigger Chrome's permission popup the moment user lands on step 3 (not
-    // when they tap Start recording). If the popup never shows it's because
-    // the site was previously blocked — we then display a big banner with
-    // exact unblock instructions for mobile Chrome.
-    async function probeCameraPermission() {
-      const blockedEl = document.getElementById('mf-cam-blocked');
-      const busyEl = document.getElementById('mf-busy-3');
-      const helpEl = document.getElementById('mf-cam-help');
-      blockedEl.hidden = true;
-      helpEl.hidden = false;
-      helpEl.textContent = 'Checking camera…';
-      helpEl.classList.remove('mf-busy--ok');
-      clearErr(3);
-
-      // If permissions API says "denied", skip getUserMedia (it would also
-      // throw silently) and jump straight to the unblock banner.
-      if (navigator.permissions && navigator.permissions.query) {
-        try {
-          const p = await navigator.permissions.query({ name: 'camera' });
-          if (p.state === 'denied') {
-            helpEl.hidden = true;
-            showBlockedBanner();
-            return;
-          }
-        } catch (_) { /* permissions API not supported here — fall through */ }
-      }
-
-      try {
-        const probe = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
-          audio: false,
-        });
-        // Permission granted — stop probe stream, we'll open a fresh one when
-        // user taps Start recording.
-        probe.getTracks().forEach((t) => t.stop());
-        helpEl.hidden = false;
-        helpEl.classList.add('mf-busy--ok');
-        helpEl.textContent = '✓ Camera ready — tap Start recording';
-      } catch (err) {
-        helpEl.hidden = true;
-        const name = (err && err.name) || 'unknown';
-        if (name === 'NotAllowedError' || name === 'SecurityError') {
-          showBlockedBanner();
-        } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-          showErr(3, 'No front camera detected on this device.');
-        } else if (name === 'NotReadableError') {
-          showErr(3, 'Camera is in use by another app. Close other camera apps and reload.');
-        } else {
-          showErr(3, `Camera unavailable (${name}). Reload and try again.`);
-        }
-      }
-    }
-
-    function showBlockedBanner() {
-      const blockedEl = document.getElementById('mf-cam-blocked');
-      const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
-      const stepsEl = document.getElementById('mf-cam-blocked-steps');
-      if (isStandalone) {
-        stepsEl.innerHTML = `
-          <li>Open <b>mainfeed.app</b> in <b>Chrome</b> (not this installed app)</li>
-          <li>Tap the <b>🔒 lock icon</b> at the LEFT of the address bar</li>
-          <li>Tap <b>Permissions</b> → <b>Camera</b> → <b>Allow</b></li>
-          <li>Reload, complete signup, then re-install the app from <b>Add to home screen</b></li>`;
-      } else {
-        stepsEl.innerHTML = `
-          <li>Tap the <b>🔒 lock icon</b> (or <b>ⓘ tune icon</b>) at the LEFT of the address bar above</li>
-          <li>Tap <b>Permissions</b> → <b>Camera</b></li>
-          <li>Change <b>Block</b> → <b>Allow</b></li>
-          <li>Then tap the <b>Try again</b> button below</li>`;
-      }
-      blockedEl.hidden = false;
-    }
-
-    document.getElementById('mf-cam-retry').addEventListener('click', () => {
-      // Tries the probe again. If they actually unblocked in site settings,
-      // this will succeed and flip back to "Camera ready".
-      probeCameraPermission();
-    });
-
     // ============ Step validation + submit ============
     document.querySelector('[data-action="next-1"]').addEventListener('click', () => {
       clearErr(1);
@@ -625,11 +316,6 @@
       if (!captured.selfie_0 || !captured.selfie_1) return showErr(2, 'Both selfies need a verified face.');
       showStep(3);
     });
-    document.querySelector('[data-action="next-3"]').addEventListener('click', () => {
-      clearErr(3);
-      if (!captured.liveness_video) return showErr(3, 'Record a 5-second video with your face in view.');
-      showStep(4);
-    });
 
     const ERR = {
       invalid_handle: 'Handle must be 2-20 lowercase letters/numbers.',
@@ -645,7 +331,6 @@
       rate_limited: 'Too many signups from this IP — try in a minute.',
       user_cap_reached: 'We are full while testing. Try again later.',
       expected_multipart: 'Bad form submission — try refreshing.',
-      liveness_video_too_large: 'Liveness video too large (max 32 MB).',
     };
     async function runProgressUntilReady() {
       // Hide form + step dots, swap in the progress screen.
@@ -724,29 +409,23 @@
 
     function setSubmitStage(msg) {
       submitBtn.textContent = msg;
-      // Also surface in the error slot in muted form, so we have a second
-      // visible place reflecting progress (helps when scroll position hides
-      // the button label).
-      const el = document.getElementById('mf-err-4');
+      const el = document.getElementById('mf-err-3');
       el.hidden = false;
       el.style.color = '#9aa';
       el.textContent = msg;
     }
     function clearSubmitStage() {
-      const el = document.getElementById('mf-err-4');
+      const el = document.getElementById('mf-err-3');
       el.style.color = '';
     }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      clearErr(4);
+      clearErr(3);
       clearSubmitStage();
       if (!document.getElementById('mf-consent-age').checked || !document.getElementById('mf-consent-terms').checked) {
-        return showErr(4, 'You need to confirm both boxes.');
+        return showErr(3, 'You need to confirm both boxes.');
       }
-      // Sanity-check captured data before the network round-trip so the user
-      // sees a precise message rather than a generic 4xx from the server.
-      if (!captured.selfie_0 || !captured.selfie_1) return showErr(4, 'Go back to step 2 and add both selfies.');
-      if (!captured.liveness_video) return showErr(4, 'Go back to step 3 and record the 10-second video.');
+      if (!captured.selfie_0 || !captured.selfie_1) return showErr(3, 'Go back to step 2 and add both selfies.');
 
       submitBtn.disabled = true;
       setSubmitStage('Packing your photos…');
@@ -758,16 +437,10 @@
         fd.set('gender', (document.querySelector('input[name="gender"]:checked') || {}).value || '');
         fd.set('consent_age', 'true');
         fd.set('consent_terms', 'true');
-        if (captured.selfie_0) fd.append('selfie_0', captured.selfie_0, 'selfie_0.jpg');
-        if (captured.selfie_1) fd.append('selfie_1', captured.selfie_1, 'selfie_1.jpg');
-        if (captured.liveness_video) {
-          const t = captured.liveness_video.type || 'video/mp4';
-          const ext = t.includes('mp4') ? 'mp4' : t.includes('quicktime') ? 'mov' : t.includes('webm') ? 'webm' : 'mp4';
-          fd.append('liveness_video', captured.liveness_video, `liveness.${ext}`);
-        }
+        fd.append('selfie_0', captured.selfie_0, 'selfie_0.jpg');
+        fd.append('selfie_1', captured.selfie_1, 'selfie_1.jpg');
 
         setSubmitStage('Uploading to Mainfeed…');
-        // Abort after 90s so a stuck request becomes a visible failure.
         const ctrl = new AbortController();
         const killer = setTimeout(() => ctrl.abort(), 90000);
         let res;
@@ -785,7 +458,7 @@
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           clearSubmitStage();
-          showErr(4, ERR[data.error] || `Signup failed (${data.error || res.status}). Tap to retry.`);
+          showErr(3, ERR[data.error] || `Signup failed (${data.error || res.status}). Tap to retry.`);
           submitBtn.disabled = false;
           submitBtn.textContent = 'Create my Mainfeed';
           return;
@@ -802,7 +475,7 @@
         const msg = isAbort
           ? 'Upload timed out after 90s — your connection or our server is slow. Tap Create my Mainfeed to retry.'
           : `Network error (${(err && err.message) || 'unknown'}). Check your connection and tap Create my Mainfeed to retry.`;
-        showErr(4, msg);
+        showErr(3, msg);
         submitBtn.disabled = false;
         submitBtn.textContent = 'Create my Mainfeed';
       }

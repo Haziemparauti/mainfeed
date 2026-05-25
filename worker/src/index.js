@@ -397,10 +397,64 @@ async function requireSession(request, env, origin) {
 async function handleMe(request, env, origin) {
   const r = await requireSession(request, env, origin);
   if (r.error) return r.error;
+  const u = await env.DB.prepare(
+    'SELECT liveness_verified FROM users WHERE id = ?'
+  ).bind(r.session.user_id).first();
   return json(
-    { ok: true, user: { id: r.session.user_id, handle: r.session.handle, email: r.session.email } },
+    {
+      ok: true,
+      user: {
+        id: r.session.user_id,
+        handle: r.session.handle,
+        email: r.session.email,
+        verified: !!(u && u.liveness_verified),
+      },
+    },
     {}, origin
   );
+}
+
+// Liveness verification is no longer required at signup. It's required only
+// when the user tries to publish a piece to their public /@handle page —
+// see [[mainfeed_app_project]]. The 10-sec record + face-check flow is
+// reused on the client; this endpoint just stores the video and flips the
+// liveness_verified flag.
+async function handleVerifyIdentity(request, env, origin) {
+  const r = await requireSession(request, env, origin);
+  if (r.error) return r.error;
+
+  const rl = await rateLimit(env, `verify:${r.session.user_id}`, 5, 600);
+  if (!rl.allowed) return errResp('rate_limited', 429, origin);
+
+  const ct = request.headers.get('Content-Type') || '';
+  if (!ct.startsWith('multipart/form-data')) {
+    return errResp('expected_multipart', 400, origin);
+  }
+
+  const form = await request.formData();
+  const video = form.get('liveness_video');
+  if (!video || typeof video.arrayBuffer !== 'function' || video.size === 0) {
+    return errResp('liveness_video_required', 400, origin);
+  }
+
+  const MAX_VIDEO_BYTES = 32 * 1024 * 1024;
+  if (video.size > MAX_VIDEO_BYTES) return errResp('liveness_video_too_large', 400, origin);
+
+  const userId = r.session.user_id;
+  const vMime = video.type || 'video/mp4';
+  const vExt = vMime.includes('quicktime') || vMime.includes('mov') ? 'mov'
+             : vMime.includes('webm') ? 'webm' : 'mp4';
+  const vKey = `selfies/${userId}/liveness.${vExt}`;
+  await env.SELFIES.put(vKey, video.stream(), {
+    httpMetadata: { contentType: vMime },
+  });
+
+  const ts = now();
+  await env.DB.prepare(
+    'UPDATE users SET liveness_verified = 1, liveness_verified_at = ? WHERE id = ?'
+  ).bind(ts, userId).run();
+
+  return json({ ok: true, verified: true, verified_at: ts }, {}, origin);
 }
 
 // ============ Feed / Pieces ============
@@ -492,6 +546,17 @@ async function handlePiecePublish(request, env, origin, pieceId, value) {
   ).bind(pieceId).first();
   if (!piece) return errResp('not_found', 404, origin);
   if (piece.user_id !== r.session.user_id) return errResp('forbidden', 403, origin);
+
+  // Going PUBLIC requires liveness verification (legal: likeness consent +
+  // anti-impersonation). Unpublishing is always allowed.
+  if (value) {
+    const u = await env.DB.prepare(
+      'SELECT liveness_verified FROM users WHERE id = ?'
+    ).bind(r.session.user_id).first();
+    if (!u || !u.liveness_verified) {
+      return errResp('verification_required', 403, origin);
+    }
+  }
 
   await env.DB.prepare(
     'UPDATE generated_pieces SET public = ? WHERE id = ?'
@@ -1230,6 +1295,7 @@ export default {
     if (method === 'POST' && path === '/api/login') return handleLogin(request, env, origin);
     if (method === 'POST' && path === '/api/logout') return handleLogout(request, env, origin);
     if (method === 'GET' && path === '/api/me') return handleMe(request, env, origin);
+    if (method === 'POST' && path === '/api/verify-identity') return handleVerifyIdentity(request, env, origin);
 
     // Feed
     if (method === 'GET' && path === '/api/feed') return handleFeed(request, env, origin);

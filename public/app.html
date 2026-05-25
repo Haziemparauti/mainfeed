@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=8" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=8" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=9" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=9" />
 </head>
 <body class="mf-app">
 
   <header class="mf-app-header">
     <a href="/app.html" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=8" alt="" class="mf-brand-icon" width="32" height="32" />
-      <img src="/assets/img/logo-rect2.svg?v=8" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=9" alt="" class="mf-brand-icon" width="32" height="32" />
+      <img src="/assets/img/logo-rect2.svg?v=9" alt="Mainfeed" class="mf-brand-mark" />
     </a>
     <button class="mf-hamburger" id="mf-app-menu-toggle" aria-label="Open menu" type="button">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
@@ -42,6 +42,7 @@
       </button>
     </div>
     <ul class="mf-menu-list">
+      <li id="mf-menu-verify-item" hidden><a href="#" id="mf-menu-verify">⚡ Verify your account</a></li>
       <li><a href="#" id="mf-menu-public-profile">My public profile</a></li>
       <li><a href="#" id="mf-menu-logout">Log out</a></li>
       <li><a href="/terms.html">Terms</a></li>
@@ -54,12 +55,56 @@
     <section class="mf-feed" id="mf-feed">
       <div class="mf-feed-empty">
         <h2>Your Mainfeed is empty</h2>
-        <p>Tell us about your day above and AI will make content about you.</p>
+        <p>Your first piece is on its way.</p>
       </div>
     </section>
 
   </main>
 
-  <script src="/assets/js/app.js?v=8" type="module"></script>
+  <!-- ============ Verify account modal ============ -->
+  <div class="mf-verify-modal" id="mf-verify-modal" hidden aria-hidden="true">
+    <div class="mf-verify-sheet">
+      <button type="button" class="mf-verify-close" id="mf-verify-close" aria-label="Close">✕</button>
+
+      <!-- Intro panel -->
+      <div class="mf-verify-panel" id="mf-verify-panel-intro">
+        <h2>Verify your account</h2>
+        <p class="mf-verify-lead">A quick 10-second video proves you're the real you. We only ask before you publish to your public <b>@handle</b> page.</p>
+        <ul class="mf-verify-why">
+          <li><b>Likeness consent.</b> The video is our record that <i>you</i> agreed to your face being used in public content.</li>
+          <li><b>Anti-impersonation.</b> Stops someone from creating a public profile with stolen selfies of you.</li>
+          <li><b>Age proof.</b> Required for the 18+ checkbox you ticked at signup.</li>
+        </ul>
+        <p class="mf-verify-fineprint">Video is stored privately. It is never shown in your feed. Required by our <a href="/terms.html">Terms</a>.</p>
+        <button type="button" class="mf-cta mf-cta-block" id="mf-verify-start">Start 10-sec recording</button>
+      </div>
+
+      <!-- Camera blocked panel (shown when permission denied) -->
+      <div class="mf-verify-panel mf-cam-blocked" id="mf-verify-panel-blocked" hidden>
+        <div class="mf-cam-blocked-title">⚠️ Camera blocked for this site</div>
+        <p class="mf-cam-blocked-body">Chrome won't ask again because camera was previously blocked. Unblock it now:</p>
+        <ol id="mf-verify-blocked-steps"></ol>
+        <button type="button" class="mf-cta mf-cta-block" id="mf-verify-retry">Try again</button>
+      </div>
+
+      <!-- Recording panel (live camera + countdown) -->
+      <div class="mf-verify-panel mf-verify-panel--rec" id="mf-verify-panel-rec" hidden>
+        <video class="mf-cam-video" id="mf-verify-video" playsinline muted autoplay></video>
+        <div class="mf-cam-hint" id="mf-verify-hint">Get ready…</div>
+        <div class="mf-cam-countdown" id="mf-verify-countdown" hidden></div>
+        <div class="mf-cam-rec-badge" id="mf-verify-badge" hidden>● REC</div>
+      </div>
+
+      <!-- Uploading + done panel -->
+      <div class="mf-verify-panel" id="mf-verify-panel-done" hidden>
+        <div class="mf-verify-done-icon">✓</div>
+        <h2 id="mf-verify-done-title">Verified</h2>
+        <p id="mf-verify-done-msg">Your account is verified — you can publish to your public profile now.</p>
+        <button type="button" class="mf-cta mf-cta-block" id="mf-verify-done-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/assets/js/app.js?v=9" type="module"></script>
 </body>
 </html>

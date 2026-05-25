@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v8';  // bump 2026-05-25 → app v8 (transparent header, hamburger) + signup v21 (glowing brand-gradient bar)
+const CACHE = 'mainfeed-v9';  // bump 2026-05-25 → verify gates Publish (signup drops 10-sec step; app gains verify modal)
 
 self.addEventListener('install', () => {
   self.skipWaiting();
