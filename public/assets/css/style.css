@@ -882,23 +882,35 @@ body.mf-app {
   top: 0;
   left: 0;
   right: 0;
-  background: transparent;
+  /* Default state: at the top of the feed — solid black bar, full width.
+     The .--scrolled modifier flips it to transparent once user starts
+     scrolling, at which point the brand + hamburger pills get their own
+     translucent backgrounds (see below) to stay readable over video. */
+  background: #000;
   z-index: 10;
-  pointer-events: none; /* let scroll/taps fall through gaps */
+  transition: background 0.2s ease;
+  pointer-events: none;
 }
 .mf-app-header > * { pointer-events: auto; }
 
-/* Brand mark (logo + Mainfeed text) — slightly opaque pill so it stays
-   readable when scrolling over any video pixel. */
+.mf-app-header--scrolled {
+  background: transparent;
+}
+
+/* Brand mark (logo + Mainfeed text). Pill bg only when scrolled (when the
+   header is solid black it would be invisible anyway, no need to render). */
 .mf-app-header .mf-brand {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 12px 6px 6px;
-  background: rgba(0, 0, 0, 0.35);
   border-radius: 999px;
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  transition: background 0.15s ease;
+}
+.mf-app-header--scrolled .mf-brand {
+  background: rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 
 /* Hamburger menu button (top-right) */
@@ -908,15 +920,19 @@ body.mf-app {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 50%;
   color: #fff;
   cursor: pointer;
   padding: 0;
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
   transition: background 0.15s ease, border-color 0.15s ease;
+}
+.mf-app-header--scrolled .mf-hamburger {
+  background: rgba(0, 0, 0, 0.45);
+  border-color: rgba(255, 255, 255, 0.10);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 .mf-hamburger:hover,
 .mf-hamburger:focus-visible {
@@ -938,9 +954,10 @@ body.mf-app {
 }
 
 .mf-app-main {
-  /* No top padding — first piece's video sits flush under the floating
-     transparent header so the logo/menu hover over the video. */
-  padding: 0 0 60px;
+  /* First piece sits BELOW the solid header bar (when at top of feed).
+     As user scrolls, the header transitions to transparent and the
+     content scrolls under the floating brand + hamburger pills. */
+  padding: calc(60px + env(safe-area-inset-top)) 0 60px;
 }
 
 .mf-diary {

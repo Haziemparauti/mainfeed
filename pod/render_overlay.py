@@ -41,7 +41,7 @@ WATERMARK_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 # Watermark layout — slightly bigger pill, bold DejaVu Sans text. Sizes
 # bumped ~30% from the previous Simplex Sans pass for better legibility.
-WATERMARK_Y_PCT = 0.10
+WATERMARK_Y_PCT = 0.06       # was 0.10 — moved up; caption follows, same gap
 WATERMARK_LOGO_PCT = 0.026   # was 0.022 (Simplex), backed off from 0.028
 WATERMARK_TEXT_PCT = 0.018   # was 0.016 (Simplex), DejaVu Bold is naturally wider
 WATERMARK_PILL_HORIZONTAL_PAD_PX = 7
@@ -52,8 +52,8 @@ WATERMARK_PILL_RADIUS_PX = 7
 WATERMARK_PILL_BG = (0, 0, 0, 175)
 WATERMARK_SUPERSAMPLE = 4            # render at N× then LANCZOS-downsample for AA
 
-# Caption layout — back to TOP, just under the pill, slightly smaller than v1
-CAPTION_Y_PCT = 0.15        # just below pill (pill center=10%, pill_h ~24px on 832h)
+# Caption layout — back to TOP, just under the pill (5% gap preserved)
+CAPTION_Y_PCT = 0.11        # was 0.15 — moved up in lockstep with watermark
 CAPTION_TEXT_PCT = 0.030    # was 0.035 — slightly smaller per user feedback
 CAPTION_LINE_SPACING_PCT = 0.010
 CAPTION_STROKE = 3

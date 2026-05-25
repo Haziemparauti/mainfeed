@@ -57,6 +57,25 @@ function paintMe(user) {
   if (verifyItem) verifyItem.hidden = !!user?.verified;
 }
 
+// ============ Header scroll behavior ============
+// At top of feed: solid black header (defined in CSS). Once user starts
+// scrolling, switch to .--scrolled which makes the bar transparent and
+// gives the brand + hamburger pills their floating backdrop-blur look.
+(function wireHeaderScroll() {
+  const headerEl = document.querySelector('.mf-app-header');
+  if (!headerEl) return;
+  let scrolled = false;
+  const update = () => {
+    const isScrolled = window.scrollY > 10;
+    if (isScrolled !== scrolled) {
+      scrolled = isScrolled;
+      headerEl.classList.toggle('mf-app-header--scrolled', scrolled);
+    }
+  };
+  window.addEventListener('scroll', update, { passive: true });
+  update();  // initialize on load
+})();
+
 // ============ App menu drawer (logout etc.) ============
 
 const appMenuToggle = $('#mf-app-menu-toggle');

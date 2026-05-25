@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v14';  // bump 2026-05-26 → app v13 (piece-action bar: full-width black with gradient top/bottom edges + gradient vertical dividers)
+const CACHE = 'mainfeed-v15';  // bump 2026-05-26 → app v14 (header: solid black at top, transparent on scroll; main padding-top so video sits below header)
 
 self.addEventListener('install', () => {
   self.skipWaiting();
