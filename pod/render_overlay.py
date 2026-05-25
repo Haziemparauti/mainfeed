@@ -51,11 +51,7 @@ WATERMARK_PILL_GAP_PX = 5
 WATERMARK_PILL_BORDER_PX = 1
 WATERMARK_PILL_RADIUS_PX = 6         # fixed corner radius (was: pill_h/2 = stadium)
 WATERMARK_PILL_BG = (0, 0, 0, 175)
-# Supersample = 1 → render text at native size. SS+LANCZOS is great for
-# smooth curves (corners, logo) but blurs small text by averaging neighbor
-# pixels during downsample. Pillow's font hinting at native size produces
-# crisper text than SS=4 + downsample for our 13px watermark.
-WATERMARK_SUPERSAMPLE = 1
+WATERMARK_SUPERSAMPLE = 4            # render at N× then LANCZOS-downsample for AA
 
 # Caption layout — back to TOP, just under the pill, slightly smaller than v1
 CAPTION_Y_PCT = 0.15        # just below pill (pill center=10%, pill_h ~24px on 832h)
@@ -304,8 +300,8 @@ def burn_overlay(input_mp4: Path, overlay_png: Path, output_mp4: Path) -> None:
         "-map", "[v]",
         "-map", "0:a?",   # audio is optional (DreamID-V output has none)
         "-c:v", "libx264",
-        "-preset", "medium", # was fast — more encode time, sharper small text
-        "-crf", "14",        # was 16 — minimal compression of watermark/caption AA pixels
+        "-preset", "fast",
+        "-crf", "16",
         "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         "-movflags", "+faststart",
