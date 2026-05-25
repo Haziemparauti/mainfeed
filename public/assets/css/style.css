@@ -2013,3 +2013,26 @@ img, svg { display: block; max-width: 100%; }
   padding: 12px 10px;
   font-size: 14px;
 }
+
+/* ============ v13: simplified — no crop UI, no oval ============ */
+.mf-stage-icon {
+  position: relative;
+  z-index: 2;
+  font-size: 36px;
+  opacity: 0.5;
+}
+.mf-busy {
+  font-size: 13px;
+  color: var(--text-mute);
+  text-align: center;
+  margin: 6px 0;
+}
+.mf-selfie-stage,
+.mf-video-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Override v12 oval (kept the class but unused now) */
+.mf-face-oval { display: none; }
