@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=22" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=22" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=23" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=23" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=22" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=22" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=23" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=23" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -332,38 +332,87 @@
       user_cap_reached: 'We are full while testing. Try again later.',
       expected_multipart: 'Bad form submission — try refreshing.',
     };
-    async function runProgressUntilReady() {
-      // Hide form + step dots, swap in the progress screen.
+    // Single source of truth for the progress screen. Caller passes the
+    // initial title; the inner phases (upload → generation → video-load)
+    // update title + bar themselves.
+    function openProgressScreen(title = 'Creating your Mainfeed') {
       form.hidden = true;
       progress.hidden = true;
       const screen = document.getElementById('mf-progress-screen');
+      screen.hidden = false;
+      const h1 = screen.querySelector('h1');
+      if (h1) h1.textContent = title;
       const fill = document.getElementById('mf-progress-fill');
       const pctEl = document.getElementById('mf-progress-pct');
-      screen.hidden = false;
+      fill.style.width = '0%';
+      pctEl.textContent = '0%';
       window.scrollTo({ top: 0 });
+    }
+    function closeProgressScreen() {
+      form.hidden = false;
+      progress.hidden = false;
+      const screen = document.getElementById('mf-progress-screen');
+      screen.hidden = true;
+    }
+    function setProgressTitle(t) {
+      const h1 = document.querySelector('#mf-progress-screen h1');
+      if (h1) h1.textContent = t;
+    }
 
-      // Estimated total time: ~3 min on the RTX A6000 community pod.
-      // Bar fills smoothly to 95% over this window. If the swap takes longer,
-      // we cap at 95% and keep polling. If it's faster, we jump to 100% on
-      // detection.
-      const TARGET_SECONDS = 180;
+    // Preload a video so it can play start-to-finish without buffering.
+    // Resolves on `canplaythrough` (best signal we have) or 12s hard cap.
+    async function preloadVideoForPlayback(url) {
+      return new Promise((resolve) => {
+        const v = document.createElement('video');
+        v.src = url;
+        v.muted = true;
+        v.playsInline = true;
+        v.preload = 'auto';
+        v.style.cssText = 'position:absolute; left:-9999px; width:1px; height:1px; opacity:0;';
+        document.body.appendChild(v);
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          v.removeEventListener('canplaythrough', finish);
+          v.removeEventListener('error', finish);
+          resolve();
+        };
+        v.addEventListener('canplaythrough', finish);
+        v.addEventListener('error', finish);
+        setTimeout(finish, 12000);
+      });
+    }
+
+    async function runProgressUntilReady() {
+      const fill = document.getElementById('mf-progress-fill');
+      const pctEl = document.getElementById('mf-progress-pct');
+      setProgressTitle('Creating your Mainfeed');
+
+      // Estimated total time: ~3 min generation + ~15s video buffering.
+      // Bar fills smoothly toward 95% over this window. Phase swaps to
+      // "loading" when the piece flips to status='ready' on the API.
+      const TARGET_SECONDS = 195;
       const startTime = Date.now();
       let pct = 0;
       let ready = false;
       let readyPiece = null;
+      let phase = 'generating';
 
       const tick = setInterval(() => {
-        if (ready) return;
         const elapsed = (Date.now() - startTime) / 1000;
-        pct = Math.min(95, (elapsed / TARGET_SECONDS) * 95);
+        if (phase === 'generating') {
+          const target = Math.min(92, (elapsed / TARGET_SECONDS) * 92);
+          if (target > pct) pct = target;
+        } else if (phase === 'loading') {
+          // Ease toward 99% during preload — actual `canplaythrough` snaps to 100%
+          if (pct < 99) pct = Math.min(99, pct + 0.4);
+        }
         fill.style.width = pct.toFixed(1) + '%';
         pctEl.textContent = Math.round(pct) + '%';
       }, 100);
 
-      // Poll the feed every 5s until at least one piece is ready. If the pod
-      // reports a failed swap or 10 minutes elapse with no ready piece, we
-      // jump to the feed anyway — the feed handles 'processing'/'failed'
-      // status cards on its own.
+      // Poll feed every 5s until a piece is ready (or all failed / 10min cap).
       const MAX_WAIT_MS = 600000;
       while (!ready) {
         await new Promise((r) => setTimeout(r, 5000));
@@ -375,60 +424,37 @@
             const pieces = data.pieces || [];
             const found = pieces.find((p) => p.status === 'ready');
             if (found) { readyPiece = found; ready = true; break; }
-            // If every piece is in a terminal-failed state, stop waiting.
             if (pieces.length > 0 && pieces.every((p) => p.status === 'failed')) break;
           }
         } catch (_) { /* keep polling */ }
       }
 
-      // Preload the rendered video into HTTP cache so the feed opens with it
-      // already buffered. Swallow errors — worst case the feed fetches it on
-      // its own when app.html mounts.
+      // Swap to "loading video" phase + wait for actual playback readiness.
       if (readyPiece && readyPiece.file_url) {
-        pctEl.textContent = 'Loading video…';
-        try {
-          const r = await fetch(`${API}${readyPiece.file_url}`, { credentials: 'include' });
-          if (r.ok) await r.blob();
-        } catch (_) {}
+        phase = 'loading';
+        setProgressTitle('Loading your video…');
+        await preloadVideoForPlayback(`${API}${readyPiece.file_url}`);
       }
 
-      // Animate to 100% over 0.6s before redirect so the bar reads true.
+      // Snap to 100% before redirect.
       clearInterval(tick);
-      const startPct = pct;
-      const t0 = Date.now();
-      await new Promise((resolve) => {
-        const fi = setInterval(() => {
-          const t = Math.min(1, (Date.now() - t0) / 600);
-          const v = startPct + (100 - startPct) * t;
-          fill.style.width = v.toFixed(1) + '%';
-          pctEl.textContent = Math.round(v) + '%';
-          if (t >= 1) { clearInterval(fi); resolve(); }
-        }, 30);
-      });
+      fill.style.width = '100%';
+      pctEl.textContent = '100%';
+      await new Promise((r) => setTimeout(r, 250));
     }
 
-    function setSubmitStage(msg) {
-      submitBtn.textContent = msg;
-      const el = document.getElementById('mf-err-3');
-      el.hidden = false;
-      el.style.color = '#9aa';
-      el.textContent = msg;
-    }
-    function clearSubmitStage() {
-      const el = document.getElementById('mf-err-3');
-      el.style.color = '';
-    }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearErr(3);
-      clearSubmitStage();
       if (!document.getElementById('mf-consent-age').checked || !document.getElementById('mf-consent-terms').checked) {
         return showErr(3, 'You need to confirm both boxes.');
       }
       if (!captured.selfie_0 || !captured.selfie_1) return showErr(3, 'Go back to step 2 and add both selfies.');
 
       submitBtn.disabled = true;
-      setSubmitStage('Packing your photos…');
+      // Go STRAIGHT to the progress screen — no red error-card stages.
+      openProgressScreen('Uploading your photos…');
+
       try {
         const fd = new FormData();
         fd.set('handle', document.getElementById('mf-handle').value.trim().toLowerCase());
@@ -440,7 +466,6 @@
         fd.append('selfie_0', captured.selfie_0, 'selfie_0.jpg');
         fd.append('selfie_1', captured.selfie_1, 'selfie_1.jpg');
 
-        setSubmitStage('Uploading to Mainfeed…');
         const ctrl = new AbortController();
         const killer = setTimeout(() => ctrl.abort(), 90000);
         let res;
@@ -454,23 +479,18 @@
         } finally {
           clearTimeout(killer);
         }
-        setSubmitStage('Server is processing…');
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          clearSubmitStage();
+          closeProgressScreen();
           showErr(3, ERR[data.error] || `Signup failed (${data.error || res.status}). Tap to retry.`);
           submitBtn.disabled = false;
           submitBtn.textContent = 'Create my Mainfeed';
           return;
         }
-        // Account is created and welcome-video swap is queued on the pod.
-        // Show the progress screen, poll until the piece is ready, preload
-        // the video file into HTTP cache, then redirect so the feed opens
-        // with the video already buffered.
         await runProgressUntilReady();
         location.href = '/app.html';
       } catch (err) {
-        clearSubmitStage();
+        closeProgressScreen();
         const isAbort = err && (err.name === 'AbortError' || /aborted/i.test(String(err.message || '')));
         const msg = isAbort
           ? 'Upload timed out after 90s — your connection or our server is slow. Tap Create my Mainfeed to retry.'

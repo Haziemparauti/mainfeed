@@ -866,18 +866,42 @@ img, svg { display: block; max-width: 100%; }
 
 /* ============ APP ============ */
 
+/* App page: full-bleed feed (no horizontal padding on body, so video reaches
+   edge-to-edge). Header floats over content as a fixed overlay. */
+body.mf-app {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .mf-app-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 0;
-  position: sticky;
+  padding: max(12px, env(safe-area-inset-top)) 16px 12px;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   background: transparent;
   z-index: 10;
+  pointer-events: none; /* let scroll/taps fall through gaps */
+}
+.mf-app-header > * { pointer-events: auto; }
+
+/* Brand mark (logo + Mainfeed text) — slightly opaque pill so it stays
+   readable when scrolling over any video pixel. */
+.mf-app-header .mf-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 999px;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
 }
 
-/* Hamburger menu button (top-right, replaces avatar initial) */
+/* Hamburger menu button (top-right) */
 .mf-hamburger {
   width: 44px;
   height: 44px;
@@ -914,7 +938,9 @@ img, svg { display: block; max-width: 100%; }
 }
 
 .mf-app-main {
-  padding: 20px 0 60px;
+  /* No top padding — first piece's video sits flush under the floating
+     transparent header so the logo/menu hover over the video. */
+  padding: 0 0 60px;
 }
 
 .mf-diary {
@@ -1004,47 +1030,75 @@ img, svg { display: block; max-width: 100%; }
   display: block;
 }
 
-/* Meme caption overlays — Impact-style, thick stroke, big and centered */
+/* Meme caption overlays — Impact-style, big and centered. Uses a
+   multi-direction text-shadow outline instead of -webkit-text-stroke,
+   which renders unevenly on Samsung/Android (white fill drops out on
+   some letters). Multi-shadow is consistent across all browsers. */
 .mf-piece-overlay {
   position: absolute;
   left: 0;
   right: 0;
-  padding: 0 6%;
+  padding: max(env(safe-area-inset-top), 64px) 6% 0;  /* clears the fixed header */
   text-align: center;
-  font-family: Impact, "Anton", "Arial Black", system-ui, sans-serif;
+  font-family: "Arial Black", "Helvetica Neue", Impact, system-ui, sans-serif;
   font-weight: 900;
   font-size: clamp(22px, 6vw, 38px);
-  line-height: 1.05;
+  line-height: 1.08;
   letter-spacing: 0.01em;
   color: #fff;
   text-transform: uppercase;
-  -webkit-text-stroke: 2px #000;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.55);
+  text-shadow:
+    -2px -2px 0 #000,
+     2px -2px 0 #000,
+    -2px  2px 0 #000,
+     2px  2px 0 #000,
+     0   -2px 0 #000,
+     0    2px 0 #000,
+    -2px  0   0 #000,
+     2px  0   0 #000,
+     0    3px 6px rgba(0, 0, 0, 0.6);
   pointer-events: none;
   user-select: none;
 }
 
 .mf-piece-overlay--top {
-  top: 4%;
+  top: 0;
 }
 
 .mf-piece-overlay--bottom {
-  bottom: 4%;
+  bottom: 64px; /* clears the watermark bar */
+  padding: 0 6%;
 }
 
+/* Watermark — full-width bar at the bottom of the video, INSIDE the
+   stage. Subtle dark gradient so it blends into video content; logo +
+   handle centered. */
 .mf-piece-watermark {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(0, 0, 0, 0.32);
-  padding: 3px 8px;
-  border-radius: 999px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 16px 12px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   pointer-events: none;
   user-select: none;
-  letter-spacing: 0.02em;
+}
+.mf-piece-watermark-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: block;
+}
+.mf-piece-watermark-text {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
 .mf-piece-actions {

@@ -144,12 +144,16 @@ function pieceCard(p) {
     : `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`;
   const pubText = p.public ? 'Unpublish' : 'Publish';
   const pubClass = p.public ? 'mf-piece-action mf-piece-action--active' : 'mf-piece-action';
+  const handle = escapeHtml(currentUser?.handle || '');
   return `
     <article class="mf-piece" data-id="${p.id}" data-caption="${escapeHtml(caption)}" data-url="${API}${p.file_url}" data-public="${p.public ? '1' : '0'}">
       <div class="mf-piece-stage">
         ${mediaTag}
         ${caption ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(caption)}</div>` : ''}
-        <div class="mf-piece-watermark">Mainfeed.app · @${escapeHtml(currentUser?.handle || '')}</div>
+        <div class="mf-piece-watermark">
+          <img class="mf-piece-watermark-logo" src="/assets/img/logo-square2.svg" alt="" />
+          <span class="mf-piece-watermark-text">Mainfeed.app · @${handle}</span>
+        </div>
       </div>
       <div class="mf-piece-actions">
         <button class="mf-piece-action" data-piece-action="download" data-id="${p.id}">Download</button>
@@ -173,15 +177,18 @@ document.addEventListener('click', async (e) => {
   if (action === 'publish-toggle') return togglePublish(id, card, btn);
 });
 
+// Liveness gate. Any action that lets a face-swap leave the private feed
+// — publish to /@handle, download to camera roll, share via Web Share API
+// — requires verification. Returns true if user is (now) verified.
+async function requireVerified() {
+  if (currentUser?.verified) return true;
+  return await runVerifyFlow();
+}
+
 async function togglePublish(id, card, btn) {
   const isPublic = card.dataset.public === '1';
-  // Going public requires liveness verification. Open the verify modal
-  // first if the user hasn't verified yet — we only ship the publish
-  // request once they're verified (or they bail out).
-  if (!isPublic && !currentUser?.verified) {
-    const verified = await runVerifyFlow();
-    if (!verified) return;
-  }
+  // Going public requires liveness verification. Unpublish is always allowed.
+  if (!isPublic && !(await requireVerified())) return;
   setBusy(btn, isPublic ? 'Unpublishing…' : 'Publishing…');
   try {
     const res = await fetch(`${API}/api/piece/${id}/${isPublic ? 'unpublish' : 'publish'}`, {
@@ -248,6 +255,9 @@ function showToast(msg) {
 }
 
 async function downloadPiece(id, card, btn) {
+  // Downloaded files end up on TikTok/IG/etc. — same likeness-leaves-the-app
+  // risk as Publish, so we gate behind verification too.
+  if (!(await requireVerified())) return;
   setBusy(btn, 'Baking…');
   try {
     const blob = await renderPieceWithCaption(card);
@@ -268,6 +278,8 @@ async function downloadPiece(id, card, btn) {
 }
 
 async function sharePiece(id, card, btn) {
+  // Web Share API hands the file straight to other apps — same as Download.
+  if (!(await requireVerified())) return;
   setBusy(btn, 'Preparing…');
   try {
     const blob = await renderPieceWithCaption(card);
