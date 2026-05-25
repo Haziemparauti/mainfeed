@@ -1047,6 +1047,11 @@ export default {
     const stockFileMatch = path.match(/^\/api\/admin\/stock\/file\/([A-Za-z0-9_.-]+)$/);
     if (method === 'GET' && stockFileMatch) return handleAdminStockFile(request, env, origin, stockFileMatch[1]);
 
+    // Admin: queue a DreamID-V swap on the RunPod pod (proxies to swap_server.py /swap)
+    if (method === 'POST' && path === '/api/admin/swap/queue') return handleAdminSwapQueue(request, env, origin);
+    // Pod-callback: pod posts here when a swap completes/fails (authed via SWAP_POD_SECRET, not ADMIN_TOKEN)
+    if (method === 'POST' && path === '/api/swap/complete') return handleSwapComplete(request, env, origin);
+
     // Public: stock files (no auth, so external services can fetch as input to swap pipeline)
     const publicStockMatch = path.match(/^\/public\/stock\/([A-Za-z0-9_.-]+)$/);
     if (method === 'GET' && publicStockMatch) return handlePublicStockFile(request, env, origin, publicStockMatch[1]);
@@ -1486,3 +1491,129 @@ async function falUploadBytes(env, bytes, filename, contentType) {
   }
 }
 
+// ============ DreamID-V swap pod integration ============
+// SWAP_POD_URL    e.g. https://ocg8daon2bxzio-8000.proxy.runpod.net  (set via `wrangler secret put`)
+// SWAP_POD_SECRET shared bearer token between worker and pod's swap_server.py
+
+function checkPodSecret(request, env) {
+  const auth = request.headers.get('Authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  return !!token && !!env.SWAP_POD_SECRET && token === env.SWAP_POD_SECRET;
+}
+
+// POST /api/admin/swap/queue
+// Body (JSON): {
+//   source_image_url:  string (anything the pod can fetch — Fal CDN, our public/selfie, etc.)
+//   target_filename:   string (basename without extension — e.g. "cop_s07_coffee_plaza_f")
+//   request_id?:       string (auto-generated if missing)
+//   output_upload_url?: string (R2 presigned PUT URL for the result mp4; null = pod keeps locally)
+//   sample_steps?:     int (default 16)
+//   sample_guide_scale_img?: float (default 4.0)
+//   size?:             string (default "832x480")
+// }
+// Forwards to ${SWAP_POD_URL}/swap with Authorization: Bearer ${SWAP_POD_SECRET}.
+async function handleAdminSwapQueue(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  if (!env.SWAP_POD_URL) return errResp('swap_pod_url_not_set', 500, origin, {
+    hint: 'wrangler secret put SWAP_POD_URL  (e.g. https://<podid>-8000.proxy.runpod.net)',
+  });
+  if (!env.SWAP_POD_SECRET) return errResp('swap_pod_secret_not_set', 500, origin, {
+    hint: 'wrangler secret put SWAP_POD_SECRET  (same value as on the pod)',
+  });
+
+  const body = await request.json().catch(() => ({}));
+  const sourceImageUrl = String(body.source_image_url || '').trim();
+  const targetFilename = String(body.target_filename || '').replace(/[^A-Za-z0-9_.-]/g, '_');
+  if (!sourceImageUrl) return errResp('missing_source_image_url', 400, origin);
+  if (!targetFilename) return errResp('missing_target_filename', 400, origin);
+
+  // Verify the stock clip exists before sending the pod off on a wild goose chase
+  const stockKey = `stock/${targetFilename}.mp4`;
+  const stockHead = await env.STOCK.head(stockKey);
+  if (!stockHead) return errResp('stock_not_found', 404, origin, { stock_key: stockKey });
+
+  const requestId = String(body.request_id || crypto.randomUUID());
+  const targetVideoUrl = `https://api.mainfeed.app/public/stock/${targetFilename}.mp4`;
+  const callbackUrl = 'https://api.mainfeed.app/api/swap/complete';
+
+  const payload = {
+    request_id: requestId,
+    source_image_url: sourceImageUrl,
+    target_video_url: targetVideoUrl,
+    target_pose_url: body.target_pose_url || null,
+    target_mask_url: body.target_mask_url || null,
+    callback_url: callbackUrl,
+    output_upload_url: body.output_upload_url || null,
+    sample_steps: Number.isFinite(body.sample_steps) ? Number(body.sample_steps) : 16,
+    sample_guide_scale_img: Number.isFinite(body.sample_guide_scale_img)
+      ? Number(body.sample_guide_scale_img) : 4.0,
+    size: typeof body.size === 'string' ? body.size : '832x480',
+  };
+
+  const podUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';
+  let res;
+  try {
+    res = await fetch(podUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.SWAP_POD_SECRET}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    return errResp('pod_unreachable', 502, origin, {
+      pod_url: podUrl,
+      detail: String(err).slice(0, 400),
+    });
+  }
+
+  const podText = await res.text().catch(() => '');
+  let podJson = null;
+  try { podJson = JSON.parse(podText); } catch (_) { /* keep as text */ }
+
+  if (!res.ok) {
+    return errResp(`pod_${res.status}`, 502, origin, {
+      pod_url: podUrl,
+      pod_response: podJson || podText.slice(0, 400),
+    });
+  }
+
+  return json({
+    ok: true,
+    request_id: requestId,
+    pod_url: podUrl,
+    target_video_url: targetVideoUrl,
+    callback_url: callbackUrl,
+    pod_response: podJson || podText.slice(0, 400),
+  }, {}, origin);
+}
+
+// POST /api/swap/complete
+// Called by the pod when a swap finishes (success or failure).
+// Authed via Authorization: Bearer ${SWAP_POD_SECRET}.
+// Body (JSON): { request_id, status: 'completed'|'failed', elapsed_sec?, error?, output_uploaded? }
+//
+// For now this is a logging stub — it records the result via console and returns ok.
+// When the production user→swap flow is wired, this will:
+//   - Look up the pending generated_pieces row by request_id
+//   - Update status='ready' on success, status='failed' on error
+//   - Fetch the output mp4 from output_upload_url and store to R2 if not already there
+//   - Trigger a Web Push notification to the user's device
+async function handleSwapComplete(request, env, origin) {
+  if (!checkPodSecret(request, env)) return errResp('unauthorized', 401, origin);
+  const body = await request.json().catch(() => ({}));
+  const requestId = String(body.request_id || '');
+  const status = String(body.status || '');
+  if (!requestId || !status) return errResp('missing_fields', 400, origin);
+
+  console.log('[swap.complete]', JSON.stringify({
+    request_id: requestId,
+    status,
+    elapsed_sec: body.elapsed_sec,
+    error: body.error,
+    output_uploaded: body.output_uploaded,
+  }));
+
+  return json({ ok: true, ack: requestId }, {}, origin);
+}

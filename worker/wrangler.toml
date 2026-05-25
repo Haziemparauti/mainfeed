@@ -32,8 +32,9 @@ binding = "AI"
 
 # Secrets (set via `wrangler secret put NAME`):
 #   FAL_API_KEY          — Fal.ai image/video generation
-#   PERSONA_API_KEY      — Persona liveness verification
 #   ADMIN_TOKEN          — admin/takedown endpoints
+#   SWAP_POD_URL         — RunPod pod URL, e.g. https://<podid>-8000.proxy.runpod.net
+#   SWAP_POD_SECRET      — shared bearer between worker and pod swap_server.py
 #   PADDLE_API_KEY       — payment processor (set when monetization lands)
 #   PADDLE_WEBHOOK_SECRET — payment webhook verification
 

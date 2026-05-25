@@ -12,3 +12,12 @@ node_modules/
 .idea/
 dist/
 build/
+
+# Swap pod — never commit model weights or runtime caches
+pod/ckpts/
+pod/repos/
+pod/.runtime/
+*.pth
+*.safetensors
+*.onnx
+*.ckpt
