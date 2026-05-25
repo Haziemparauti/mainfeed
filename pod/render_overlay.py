@@ -15,6 +15,7 @@ the pod has zero external image assets to manage — just an Anton TTF.
 """
 
 from __future__ import annotations
+import io
 import subprocess
 import textwrap
 from functools import lru_cache
@@ -22,6 +23,11 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
+
+# cairosvg rasterizes the real Mainfeed brand SVG at startup so the watermark
+# uses the actual logo (gradient + custom "M") rather than a programmatic
+# approximation. Linux-only; the Dockerfile installs libcairo2 + cairosvg.
+import cairosvg
 
 
 # ============ config (tweak to retune layout) ============
@@ -46,9 +52,10 @@ CAPTION_LINE_SPACING_PCT = 0.010
 CAPTION_STROKE = 3
 CAPTION_HORIZONTAL_PAD_PCT = 0.04   # left/right padding (smaller = wider lines = fewer wraps)
 
-# Logo render quality — we draw it big once and downsample with LANCZOS so it
-# looks sharp at the tiny display size. Re-rendering at the target size
-# directly produces a blocky/pixelated look.
+# Logo source SVG (the real Mainfeed brand mark) + render quality. We
+# rasterize the SVG once at LOGO_HIRES_SIZE then LANCZOS-downsample for
+# each watermark draw — sharp at any size.
+LOGO_SVG_PATH = "/app/assets/logo-square2.svg"
 LOGO_HIRES_SIZE = 512
 
 # Mainfeed brand-kit gradient (dark navy → deep blue → teal → gold)
@@ -60,54 +67,20 @@ BRAND_COLORS = [
 ]
 
 
-# ============ logo (generated from brand colors at runtime) ============
+# ============ logo (rasterized from the real Mainfeed brand SVG) ============
 
-def _interp_brand(t: float) -> Tuple[int, int, int]:
-    """Sample the 4-stop brand gradient at position t in [0, 1]."""
-    if t <= 0: return BRAND_COLORS[0]
-    if t >= 1: return BRAND_COLORS[-1]
-    n = len(BRAND_COLORS) - 1
-    seg = t * n
-    i = int(seg)
-    f = seg - i
-    a = BRAND_COLORS[i]
-    b = BRAND_COLORS[i + 1]
-    return (
-        int(a[0] * (1 - f) + b[0] * f),
-        int(a[1] * (1 - f) + b[1] * f),
-        int(a[2] * (1 - f) + b[2] * f),
-    )
-
+# BRAND_COLORS is kept as a constant in case we want a programmatic fallback,
+# but the live logo path uses cairosvg + the actual brand SVG, not these.
 
 @lru_cache(maxsize=1)
 def _make_logo_hires() -> Image.Image:
-    """Render the logo ONCE at high resolution. We downsample per-watermark."""
-    size = LOGO_HIRES_SIZE
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    px = img.load()
-    for y in range(size):
-        for x in range(size):
-            t = (x + y) / (2 * (size - 1))
-            r, g, b = _interp_brand(t)
-            px[x, y] = (r, g, b, 255)
-
-    # Rounded-corner alpha mask
-    radius = int(size * 0.22)
-    mask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(mask).rounded_rectangle(
-        [(0, 0), (size - 1, size - 1)], radius=radius, fill=255
+    """Rasterize the brand SVG ONCE at high resolution; downsample per-watermark."""
+    png_bytes = cairosvg.svg2png(
+        url=LOGO_SVG_PATH,
+        output_width=LOGO_HIRES_SIZE,
+        output_height=LOGO_HIRES_SIZE,
     )
-    img.putalpha(mask)
-
-    # White "M" centered. Use the caption font (Anton) for the iconic letter.
-    draw = ImageDraw.Draw(img)
-    m_size = int(size * 0.66)
-    font = ImageFont.truetype(CAPTION_FONT_PATH, m_size)
-    m_w = draw.textlength("M", font=font)
-    m_x = (size - m_w) / 2
-    m_y = (size - m_size) / 2 - m_size * 0.10
-    draw.text((m_x, m_y), "M", font=font, fill=(255, 255, 255, 255))
-    return img
+    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
 
 
 def make_logo(size: int) -> Image.Image:

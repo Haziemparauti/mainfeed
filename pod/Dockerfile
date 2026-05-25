@@ -53,16 +53,20 @@ RUN pip install --no-cache-dir fastapi 'uvicorn[standard]' httpx boto3 huggingfa
 
 # === Post-swap branding (caption + watermark burn-in via Pillow + FFmpeg) ===
 # Pillow renders the overlay PNG; FFmpeg composites it onto every frame.
-RUN pip install --no-cache-dir Pillow
+# cairosvg rasterizes the real Mainfeed brand SVG at pod startup so the
+# watermark uses the actual brand mark (not a programmatic approximation).
+RUN apt-get update -qq && apt-get install -y -qq libcairo2 fonts-dejavu-core && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir Pillow cairosvg
 
-# Anton (SIL OFL) — bold condensed, ideal for meme captions. Bundled
-# in-image. Watermark text uses DejaVu Sans Bold which is preinstalled in
-# the Ubuntu base via fonts-dejavu-core (no download needed).
+# Anton (SIL OFL) — bold condensed, ideal for meme captions. Watermark text
+# uses DejaVu Sans Bold via fonts-dejavu-core (system path).
 RUN mkdir -p /app/assets && \
     wget -q -O /app/assets/Anton.ttf \
-      https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf && \
-    apt-get update -qq && apt-get install -y -qq fonts-dejavu-core && \
-    rm -rf /var/lib/apt/lists/*
+      https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf
+
+# Bundle the real brand SVG so the pod renders the actual logo, not a fake one.
+COPY assets/logo-square2.svg /app/assets/logo-square2.svg
 
 # === Server code ===
 COPY swap_server.py /root/swap_server.py
