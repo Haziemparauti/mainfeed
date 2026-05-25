@@ -42,7 +42,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir decord
 RUN pip install --no-cache-dir packaging ninja \
     && pip install --no-cache-dir flash_attn --no-build-isolation
-RUN pip install --no-cache-dir fastapi 'uvicorn[standard]' httpx boto3
+
+# Replace stock onnxruntime (CPU only) with onnxruntime-gpu so DreamID-V's DWPose
+# pose+mask preprocessing runs on the GPU. CPU-ORT does ~5-8s per frame on RTX A6000;
+# GPU-ORT brings it to <1s per frame (~10x speedup on the dominant per-swap cost).
+RUN pip uninstall -y onnxruntime onnxruntime-gpu 2>/dev/null || true \
+    && pip install --no-cache-dir onnxruntime-gpu
+
+RUN pip install --no-cache-dir fastapi 'uvicorn[standard]' httpx boto3 huggingface_hub
 
 # === Server code ===
 COPY swap_server.py /root/swap_server.py
