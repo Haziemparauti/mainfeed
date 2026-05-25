@@ -44,8 +44,6 @@ let currentUser = null;
 })();
 
 function paintMe(user) {
-  const initial = $('#mf-avatar-initial');
-  if (initial && user?.handle) initial.textContent = user.handle.charAt(0).toUpperCase();
   const menuInitial = $('#mf-app-menu-initial');
   if (menuInitial && user?.handle) menuInitial.textContent = user.handle.charAt(0).toUpperCase();
   const menuHandle = $('#mf-app-menu-handle');
