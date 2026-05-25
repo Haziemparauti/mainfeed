@@ -1052,6 +1052,9 @@ export default {
     // Pod-callback: pod posts here when a swap completes/fails (authed via SWAP_POD_SECRET, not ADMIN_TOKEN)
     if (method === 'POST' && path === '/api/swap/complete') return handleSwapComplete(request, env, origin);
 
+    // Admin: classify a selfie into one of the 40 hair+skin appearance buckets (Llama 3.2 Vision)
+    if (method === 'POST' && path === '/api/admin/detect-appearance') return handleAdminDetectAppearance(request, env, origin);
+
     // Public: stock files (no auth, so external services can fetch as input to swap pipeline)
     const publicStockMatch = path.match(/^\/public\/stock\/([A-Za-z0-9_.-]+)$/);
     if (method === 'GET' && publicStockMatch) return handlePublicStockFile(request, env, origin, publicStockMatch[1]);
@@ -1623,4 +1626,232 @@ async function handleSwapComplete(request, env, origin) {
   }));
 
   return json({ ok: true, ack: requestId }, {}, origin);
+}
+
+// ============ Appearance-bucket detection (Llama 3.2 Vision) ============
+//
+// 40 hair+skin buckets per the v5 architecture. Llama 3.2 Vision classifies the
+// user's selfie(s) along the structured attributes below, then a deterministic
+// mapping picks the closest of the 40 bucket keys. (Asking Llama to pick the
+// key directly is unreliable — too many similar options. Structured classify +
+// rule-based map is more robust.)
+
+const APPEARANCE_BUCKETS = [
+  // Male (15)
+  { key: 'm_bald',                       gender: 'm', length: 'bald',   color: 'any',         texture: 'any',      style: 'any',  skin: 'any' },
+  { key: 'm_buzz_dark_med',              gender: 'm', length: 'buzz',   color: 'black',       texture: 'straight', style: 'down', skin: 'medium' },
+  { key: 'm_buzz_light_fair',            gender: 'm', length: 'buzz',   color: 'blonde',      texture: 'straight', style: 'down', skin: 'fair' },
+  { key: 'm_short_dark_straight_brown',  gender: 'm', length: 'short',  color: 'black',       texture: 'straight', style: 'down', skin: 'medium' },
+  { key: 'm_short_dark_straight_fair',   gender: 'm', length: 'short',  color: 'black',       texture: 'straight', style: 'down', skin: 'fair' },
+  { key: 'm_short_blonde_straight_pale', gender: 'm', length: 'short',  color: 'blonde',      texture: 'straight', style: 'down', skin: 'pale' },
+  { key: 'm_short_dark_coily_deep',      gender: 'm', length: 'short',  color: 'black',       texture: 'coily',    style: 'down', skin: 'deep' },
+  { key: 'm_medium_dark_straight_brown', gender: 'm', length: 'medium', color: 'black',       texture: 'straight', style: 'down', skin: 'medium' },
+  { key: 'm_medium_dark_curly_brown',    gender: 'm', length: 'medium', color: 'black',       texture: 'curly',    style: 'down', skin: 'medium' },
+  { key: 'm_medium_brown_wavy_fair',     gender: 'm', length: 'medium', color: 'brown',       texture: 'wavy',     style: 'down', skin: 'fair' },
+  { key: 'm_medium_blonde_wavy_pale',    gender: 'm', length: 'medium', color: 'blonde',      texture: 'wavy',     style: 'down', skin: 'pale' },
+  { key: 'm_long_dark_straight_brown',   gender: 'm', length: 'long',   color: 'black',       texture: 'straight', style: 'down', skin: 'medium' },
+  { key: 'm_man_bun_dark_brown',         gender: 'm', length: 'medium', color: 'black',       texture: 'straight', style: 'bun',  skin: 'medium' },
+  { key: 'm_dreads_dark_deep',           gender: 'm', length: 'medium', color: 'black',       texture: 'coily',    style: 'locs', skin: 'deep' },
+  { key: 'm_gray_short_pale',            gender: 'm', length: 'short',  color: 'gray',        texture: 'straight', style: 'down', skin: 'pale' },
+  // Female (25)
+  { key: 'f_pixie_dark_brown',           gender: 'f', length: 'short',  color: 'black',       texture: 'straight', style: 'down',   skin: 'medium' },
+  { key: 'f_pixie_blonde_pale',          gender: 'f', length: 'short',  color: 'blonde',      texture: 'straight', style: 'down',   skin: 'pale' },
+  { key: 'f_short_bob_dark_brown',       gender: 'f', length: 'short',  color: 'black',       texture: 'straight', style: 'down',   skin: 'medium' },
+  { key: 'f_short_bob_blonde_pale',      gender: 'f', length: 'short',  color: 'blonde',      texture: 'straight', style: 'down',   skin: 'pale' },
+  { key: 'f_short_dark_coily_deep',      gender: 'f', length: 'short',  color: 'black',       texture: 'coily',    style: 'down',   skin: 'deep' },
+  { key: 'f_medium_dark_straight_brown', gender: 'f', length: 'medium', color: 'black',       texture: 'straight', style: 'down',   skin: 'medium' },
+  { key: 'f_medium_dark_wavy_brown',     gender: 'f', length: 'medium', color: 'black',       texture: 'wavy',     style: 'down',   skin: 'medium' },
+  { key: 'f_medium_dark_curly_brown',    gender: 'f', length: 'medium', color: 'black',       texture: 'curly',    style: 'down',   skin: 'medium' },
+  { key: 'f_medium_brown_straight_fair', gender: 'f', length: 'medium', color: 'brown',       texture: 'straight', style: 'down',   skin: 'fair' },
+  { key: 'f_medium_brown_wavy_fair',     gender: 'f', length: 'medium', color: 'brown',       texture: 'wavy',     style: 'down',   skin: 'fair' },
+  { key: 'f_medium_blonde_straight_pale',gender: 'f', length: 'medium', color: 'blonde',      texture: 'straight', style: 'down',   skin: 'pale' },
+  { key: 'f_medium_blonde_wavy_pale',    gender: 'f', length: 'medium', color: 'blonde',      texture: 'wavy',     style: 'down',   skin: 'pale' },
+  { key: 'f_medium_red_wavy_pale',       gender: 'f', length: 'medium', color: 'red',         texture: 'wavy',     style: 'down',   skin: 'pale' },
+  { key: 'f_long_black_straight_brown',  gender: 'f', length: 'long',   color: 'black',       texture: 'straight', style: 'down',   skin: 'medium' },
+  { key: 'f_long_black_wavy_brown',      gender: 'f', length: 'long',   color: 'black',       texture: 'wavy',     style: 'down',   skin: 'medium' },
+  { key: 'f_long_brown_straight_fair',   gender: 'f', length: 'long',   color: 'brown',       texture: 'straight', style: 'down',   skin: 'fair' },
+  { key: 'f_long_brown_wavy_fair',       gender: 'f', length: 'long',   color: 'brown',       texture: 'wavy',     style: 'down',   skin: 'fair' },
+  { key: 'f_long_blonde_straight_pale',  gender: 'f', length: 'long',   color: 'blonde',      texture: 'straight', style: 'down',   skin: 'pale' },
+  { key: 'f_long_blonde_wavy_pale',      gender: 'f', length: 'long',   color: 'blonde',      texture: 'wavy',     style: 'down',   skin: 'pale' },
+  { key: 'f_long_red_wavy_pale',         gender: 'f', length: 'long',   color: 'red',         texture: 'wavy',     style: 'down',   skin: 'pale' },
+  { key: 'f_long_dark_coily_deep',       gender: 'f', length: 'long',   color: 'black',       texture: 'coily',    style: 'down',   skin: 'deep' },
+  { key: 'f_braids_dark_deep',           gender: 'f', length: 'long',   color: 'black',       texture: 'coily',    style: 'braids', skin: 'deep' },
+  { key: 'f_locs_dark_deep',             gender: 'f', length: 'long',   color: 'black',       texture: 'coily',    style: 'locs',   skin: 'deep' },
+  { key: 'f_afro_dark_deep',             gender: 'f', length: 'medium', color: 'black',       texture: 'coily',    style: 'afro',   skin: 'deep' },
+  { key: 'f_gray_medium_pale',           gender: 'f', length: 'medium', color: 'gray',        texture: 'straight', style: 'down',   skin: 'pale' },
+];
+
+const APPEARANCE_PROMPT = `You are classifying a person's appearance for face-swap library matching.
+Look at the photo and return STRICT JSON (no prose, no markdown, no backticks) with these EXACT keys:
+
+{
+  "gender":        "m" | "f",
+  "hair_length":   "bald" | "buzz" | "short" | "medium" | "long",
+  "hair_color":    "black" | "dark_brown" | "brown" | "blonde" | "red" | "gray",
+  "hair_texture":  "straight" | "wavy" | "curly" | "coily",
+  "hair_style":    "down" | "bun" | "braids" | "locs" | "afro",
+  "skin_tone":     "pale" | "fair" | "medium" | "brown" | "deep",
+  "confidence":    0.0-1.0
+}
+
+Definitions:
+- hair_length: bald = no hair, buzz = < 1cm clipper cut, short = 1-5cm, medium = chin-to-shoulder, long = past shoulder
+- skin_tone: pale = very fair Northern European, fair = light Caucasian, medium = olive / South Asian / Latino, brown = brown South Asian or light Black, deep = dark Black skin
+- hair_style: pick "down" unless the hair is clearly in a top-bun, braids/cornrows, locs/dreadlocks, or afro pick-out style
+- For bald subjects, set hair_color/texture/style to a sensible default ("black"/"straight"/"down")
+
+Output ONLY the JSON object. No extra text.`;
+
+function _coerceAttr(attrs) {
+  // Light normalization so the Llama output maps cleanly to the bucket table.
+  const a = { ...attrs };
+  a.gender = (a.gender || '').toLowerCase().startsWith('f') ? 'f' : 'm';
+  a.hair_length  = String(a.hair_length  || 'medium').toLowerCase();
+  a.hair_color   = String(a.hair_color   || 'black').toLowerCase().replace(/\s+/g, '_');
+  a.hair_texture = String(a.hair_texture || 'straight').toLowerCase();
+  a.hair_style   = String(a.hair_style   || 'down').toLowerCase();
+  a.skin_tone    = String(a.skin_tone    || 'medium').toLowerCase();
+  // Collapse hair_color: dark_brown→black, etc. (the bucket table only uses black/brown/blonde/red/gray)
+  if (a.hair_color === 'dark_brown') a.hair_color = 'black';
+  if (a.hair_color === 'jet_black' || a.hair_color === 'jet-black') a.hair_color = 'black';
+  return a;
+}
+
+function _pickBucket(attrs) {
+  const a = _coerceAttr(attrs);
+  // Score each bucket against the attributes; higher = closer.
+  // Gender mismatch = hard reject (filter first), then weighted match.
+  const candidates = APPEARANCE_BUCKETS.filter(b => b.gender === a.gender);
+  let best = null, bestScore = -1, bestExplain = '';
+  for (const b of candidates) {
+    let s = 0;
+    const ex = [];
+    if (b.length  === a.hair_length  || b.length  === 'any') { s += 3; } else if (
+      // adjacent length penalty smaller
+      (b.length === 'short' && (a.hair_length === 'buzz' || a.hair_length === 'medium')) ||
+      (b.length === 'medium' && (a.hair_length === 'short' || a.hair_length === 'long')) ||
+      (b.length === 'long' && a.hair_length === 'medium') ||
+      (b.length === 'buzz' && a.hair_length === 'short') ||
+      (b.length === 'bald' && a.hair_length === 'buzz')
+    ) { s += 1; }
+    if (b.color   === a.hair_color   || b.color   === 'any') s += 3;
+    if (b.texture === a.hair_texture || b.texture === 'any') s += 2;
+    if (b.style   === a.hair_style   || b.style   === 'any') s += 2;
+    if (b.skin    === a.skin_tone    || b.skin    === 'any') { s += 4; } else if (
+      // adjacent skin penalty smaller
+      (b.skin === 'fair' && (a.skin_tone === 'pale' || a.skin_tone === 'medium')) ||
+      (b.skin === 'medium' && (a.skin_tone === 'fair' || a.skin_tone === 'brown')) ||
+      (b.skin === 'brown' && (a.skin_tone === 'medium' || a.skin_tone === 'deep')) ||
+      (b.skin === 'deep' && a.skin_tone === 'brown') ||
+      (b.skin === 'pale' && a.skin_tone === 'fair')
+    ) { s += 1.5; }
+    if (s > bestScore) { bestScore = s; best = b; bestExplain = ex.join(','); }
+  }
+  return { bucket: best ? best.key : null, score: bestScore };
+}
+
+// POST /api/admin/detect-appearance
+// Body (JSON): one of:
+//   { selfie_r2_key: "stock/test_selfie.jpg",  selfie_r2_bucket?: "STOCK" | "SELFIES" }
+//   { selfie_url:    "https://...external-jpg..." }
+// Returns: { ok, attributes: {gender, hair_length, ...}, bucket, score, raw }
+async function handleAdminDetectAppearance(request, env, origin) {
+  try {
+    return await _detectAppearanceInner(request, env, origin);
+  } catch (err) {
+    return errResp('detect_appearance_exception', 500, origin, {
+      detail: String(err).slice(0, 600),
+      stack: (err && err.stack ? String(err.stack).slice(0, 800) : null),
+    });
+  }
+}
+async function _detectAppearanceInner(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  if (!env.AI) return errResp('ai_binding_missing', 500, origin);
+  const body = await request.json().catch(() => ({}));
+
+  // Source priority: R2 binding (preferred — no self-fetch issues) > external URL
+  let imageBytes;
+  const r2Key = typeof body.selfie_r2_key === 'string' ? body.selfie_r2_key : '';
+  const r2BucketName = String(body.selfie_r2_bucket || 'STOCK').toUpperCase();
+  const selfieUrl = String(body.selfie_url || '').trim();
+
+  if (r2Key) {
+    const bucket = env[r2BucketName] || env.STOCK;
+    if (!bucket) return errResp('r2_bucket_binding_missing', 500, origin, { bucket: r2BucketName });
+    const obj = await bucket.get(r2Key);
+    if (!obj) return errResp('selfie_not_found', 404, origin, { r2_key: r2Key, r2_bucket: r2BucketName });
+    imageBytes = new Uint8Array(await obj.arrayBuffer());
+  } else if (selfieUrl) {
+    try {
+      const r = await fetch(selfieUrl);
+      if (!r.ok) return errResp('selfie_fetch_failed', 502, origin, { status: r.status });
+      imageBytes = new Uint8Array(await r.arrayBuffer());
+    } catch (err) {
+      return errResp('selfie_fetch_exception', 502, origin, { detail: String(err).slice(0, 400) });
+    }
+  } else {
+    return errResp('missing_selfie_source', 400, origin, { hint: 'provide selfie_r2_key (preferred) or selfie_url' });
+  }
+
+  // Call Llama 3.2 Vision (auto-accept license on first use)
+  let aiResp;
+  const aiArgs = {
+    prompt: APPEARANCE_PROMPT,
+    image: [...imageBytes],
+    max_tokens: 256,
+  };
+  try {
+    aiResp = await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', aiArgs);
+  } catch (err) {
+    const msg = String(err).slice(0, 800);
+    if (msg.includes("5016") || msg.toLowerCase().includes("must submit the prompt 'agree'")) {
+      try {
+        await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', { prompt: 'agree' });
+        aiResp = await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', aiArgs);
+      } catch (err2) {
+        return errResp('ai_call_exception_after_agree', 500, origin, { detail: String(err2).slice(0, 400) });
+      }
+    } else {
+      return errResp('ai_call_exception', 500, origin, { detail: msg });
+    }
+  }
+
+  // Workers AI Llama 3.2 Vision typically returns:
+  //   { response: <object or string>, tool_calls: [...], usage: {...} }
+  // The model is JSON-mode aware, so .response is often already the parsed
+  // attribute object. Fall through to string-parsing if not.
+  let attrs = null;
+  if (aiResp && typeof aiResp === 'object') {
+    if (aiResp.response && typeof aiResp.response === 'object') {
+      attrs = aiResp.response;
+    } else {
+      const candidate = (typeof aiResp.response === 'string' ? aiResp.response
+                        : typeof aiResp.result === 'string' ? aiResp.result
+                        : '').trim();
+      if (candidate) {
+        const m = candidate.match(/\{[\s\S]*\}/);
+        if (m) { try { attrs = JSON.parse(m[0]); } catch (_) {} }
+      }
+    }
+  }
+  if (!attrs || !attrs.gender) {
+    return json({
+      ok: false,
+      error: 'ai_parse_failed',
+      raw: JSON.stringify(aiResp).slice(0, 1500),
+    }, {}, origin);
+  }
+
+  // Optional gender override (signup may know the gender already and Llama mis-classifies hairstyle)
+  if (body.gender === 'm' || body.gender === 'f') attrs.gender = body.gender;
+
+  const { bucket, score } = _pickBucket(attrs);
+
+  return json({
+    ok: true,
+    attributes: attrs,
+    bucket,
+    score,
+  }, {}, origin);
 }

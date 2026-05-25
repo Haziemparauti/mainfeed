@@ -39,7 +39,7 @@ Always-warm pod is **deferred** until launch. Until then:
 | `Dockerfile` | Reproducible build of the swap pod image. |
 | `swap_server.py` | FastAPI REST server. Loads DreamID-V once, serves `/swap`. |
 | `precompute_pose.py` | Per-stock-clip DWPose preprocessing. Run once during library prep. |
-| `scripts/mirror_weights_to_r2.sh` | One-time R2 mirror of HuggingFace weights. |
+| `scripts/mirror_weights_to_r2.py` | One-time R2 mirror of all weights from pod-local → `mainfeed-content/models/`. Idempotent. |
 
 ## Quick start (dev — iterate against the existing pod via SSH)
 
@@ -94,21 +94,18 @@ volume.
 
 ## Phase 1B — supply-chain hardening (R2 mirror)
 
-When the dev loop stabilizes and we want production builds that don't depend on
-HuggingFace being up:
+To insulate pod boots from HuggingFace (rate-limits, repo deletions, etc.):
 
 ```bash
-bash pod/scripts/mirror_weights_to_r2.sh    # 14 GB upload to mainfeed-content/models/
+# On the pod, with R2 creds in env (e.g. via /root/r2_creds.env):
+set -a; . /root/r2_creds.env; set +a
+python /root/mirror_weights_to_r2.py
+# ~24 GB uploaded to mainfeed-content/models/ in ~6 min at ~60 MB/s
 ```
 
-Then rebuild image with R2-backed weights:
-
-```bash
-docker build \\
-  --build-arg HARDEN_WEIGHTS_R2=1 \\
-  --build-arg R2_PUBLIC_PREFIX=https://mainfeed-content.r2.cloudflarestorage.com/models \\
-  -t ghcr.io/haziemparauti/mainfeed-swap:v1 pod/
-```
+Then start the swap server with `HARDEN_WEIGHTS_R2=1` — `ensure_weights()` will
+fetch from `r2://mainfeed-content/models/...` via boto3 instead of HuggingFace.
+Same files, same sizes, byte-identical for downstream inference.
 
 ## REST contract
 
