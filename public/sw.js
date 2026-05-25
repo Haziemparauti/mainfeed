@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v13';  // bump 2026-05-26 → app v12 (piece-action buttons: tighter spacing + brand-gradient borders)
+const CACHE = 'mainfeed-v14';  // bump 2026-05-26 → app v13 (piece-action bar: full-width black with gradient top/bottom edges + gradient vertical dividers)
 
 self.addEventListener('install', () => {
   self.skipWaiting();

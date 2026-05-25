@@ -1101,42 +1101,68 @@ body.mf-app {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
-/* Tight to the video edge — was 10px top, now 4px so buttons sit right
-   under the watermark bar */
+/* Full-width black action bar, edge-to-edge under the video.
+   - Top + bottom edges: thin gradient line via ::before / ::after
+   - Inside: 3 click areas (Download | Share | Publish), each separated
+     by a short vertical gradient line via :nth-child + ::before */
 .mf-piece-actions {
   display: flex;
-  gap: 8px;
-  padding: 4px 16px 14px;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  background: #000;
+  position: relative;
 }
+.mf-piece-actions::before,
+.mf-piece-actions::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, #003f82, #4ca2b5, #ffd27f);
+  pointer-events: none;
+}
+.mf-piece-actions::before { top: 0; }
+.mf-piece-actions::after  { bottom: 0; }
 
-/* Brand-gradient border via the padding-box/border-box composite trick:
-   the inner background is solid (matches body), the outer is the brand
-   gradient — border becomes transparent and the gradient shows through */
 .mf-piece-action {
   flex: 1;
-  background:
-    linear-gradient(var(--bg), var(--bg)) padding-box,
-    linear-gradient(90deg, #003f82, #4ca2b5, #ffd27f) border-box;
-  border: 1.5px solid transparent;
-  border-radius: var(--radius-sm);
-  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 14px 0;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text);
+  color: #fff;
   margin: 0;
+  position: relative;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+/* Vertical gradient separator between buttons (every button except first
+   gets a short gradient line on its left edge). 25%/25% inset so the
+   separator is shorter than the button height — reads as a divider,
+   not a wall. */
+.mf-piece-action + .mf-piece-action::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 25%;
+  bottom: 25%;
+  width: 1px;
+  background: linear-gradient(180deg, #003f82, #4ca2b5, #ffd27f);
+  pointer-events: none;
 }
 
 .mf-piece-action:active {
-  background:
-    linear-gradient(var(--surface), var(--surface)) padding-box,
-    linear-gradient(90deg, #003f82, #4ca2b5, #ffd27f) border-box;
+  background: rgba(255, 255, 255, 0.05);
 }
 
-/* Published state: keep the gradient border but tint the interior */
+/* Published state: text turns brand-gold so the user can see which
+   pieces are live on their public profile */
 .mf-piece-action--active {
-  background:
-    linear-gradient(135deg, rgba(76, 162, 181, 0.22), rgba(255, 210, 127, 0.16)) padding-box,
-    linear-gradient(90deg, #003f82, #4ca2b5, #ffd27f) border-box;
+  color: #ffd27f;
 }
 
 /* ============ APP MENU DRAWER (logout, profile, etc) ============ */
