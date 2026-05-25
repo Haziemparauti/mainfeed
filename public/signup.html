@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=11" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=11" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=12" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=12" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=11" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=11" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=12" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=12" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -72,47 +72,57 @@
         <button class="mf-cta mf-cta-block" type="button" data-action="next-1">Continue</button>
       </section>
 
-      <!-- ============ Step 2: selfies ============ -->
+      <!-- ============ Step 2: selfies (2 squares side-by-side, with crop UI) ============ -->
       <section class="mf-step" data-step="2" hidden>
         <h1>Two selfies of you</h1>
-        <p class="mf-sub">Front-facing, clear lighting. Line up your face inside the oval.</p>
+        <p class="mf-sub" id="mf-step2-sub">Take or upload a photo, then drag and pinch to fit your face in the oval.</p>
 
         <div class="mf-selfie-grid">
-
+          <!-- slot 0 -->
           <div class="mf-selfie-card" data-slot="0">
-            <div class="mf-selfie-preview">
+            <div class="mf-selfie-stage" data-stage="0">
               <div class="mf-face-oval" aria-hidden="true"></div>
               <span class="mf-selfie-num">1</span>
             </div>
-            <div class="mf-selfie-actions" data-actions-for="0">
-              <button type="button" class="mf-btn-action mf-btn-action--primary" data-camera-open="0">
+            <div class="mf-selfie-actions" data-actions="0">
+              <button type="button" class="mf-btn-action mf-btn-action--primary" data-take="0">
                 <span>📷</span> Take photo
               </button>
-              <button type="button" class="mf-btn-action" data-upload-open="0">
-                <span>📁</span> Upload from device
+              <button type="button" class="mf-btn-action" data-upload="0">
+                <span>📁</span> Upload
               </button>
-              <input type="file" data-file-input="0" accept="image/*" hidden />
+              <input type="file" data-camera-input="0" accept="image/*" capture="user" hidden />
+              <input type="file" data-upload-input="0" accept="image/*" hidden />
+            </div>
+            <div class="mf-crop-actions" data-crop-actions="0" hidden>
+              <button type="button" class="mf-btn-action mf-btn-action--primary" data-save="0">Save</button>
+              <button type="button" class="mf-btn-action" data-discard="0">Retake</button>
             </div>
             <button type="button" class="mf-link-retake" data-retake="0" hidden>Retake</button>
           </div>
 
+          <!-- slot 1 -->
           <div class="mf-selfie-card" data-slot="1">
-            <div class="mf-selfie-preview">
+            <div class="mf-selfie-stage" data-stage="1">
               <div class="mf-face-oval" aria-hidden="true"></div>
               <span class="mf-selfie-num">2</span>
             </div>
-            <div class="mf-selfie-actions" data-actions-for="1">
-              <button type="button" class="mf-btn-action mf-btn-action--primary" data-camera-open="1">
+            <div class="mf-selfie-actions" data-actions="1">
+              <button type="button" class="mf-btn-action mf-btn-action--primary" data-take="1">
                 <span>📷</span> Take photo
               </button>
-              <button type="button" class="mf-btn-action" data-upload-open="1">
-                <span>📁</span> Upload from device
+              <button type="button" class="mf-btn-action" data-upload="1">
+                <span>📁</span> Upload
               </button>
-              <input type="file" data-file-input="1" accept="image/*" hidden />
+              <input type="file" data-camera-input="1" accept="image/*" capture="user" hidden />
+              <input type="file" data-upload-input="1" accept="image/*" hidden />
+            </div>
+            <div class="mf-crop-actions" data-crop-actions="1" hidden>
+              <button type="button" class="mf-btn-action mf-btn-action--primary" data-save="1">Save</button>
+              <button type="button" class="mf-btn-action" data-discard="1">Retake</button>
             </div>
             <button type="button" class="mf-link-retake" data-retake="1" hidden>Retake</button>
           </div>
-
         </div>
 
         <p class="mf-err" id="mf-err-2" hidden></p>
@@ -120,13 +130,13 @@
         <button class="mf-back-bottom" type="button" data-back="1">← Back</button>
       </section>
 
-      <!-- ============ Step 3: 5-sec video ============ -->
+      <!-- ============ Step 3: 5-sec video via native camera + duration validation ============ -->
       <section class="mf-step" data-step="3" hidden>
         <h1>5-second video of you</h1>
-        <p class="mf-sub">Slowly turn your head left and right. Auto-stops at 5 seconds.</p>
+        <p class="mf-sub">Slowly turn your head left and right. About 5 seconds — under 8.</p>
 
         <div class="mf-video-card">
-          <div class="mf-video-preview" id="mf-video-preview">
+          <div class="mf-video-stage" id="mf-video-stage">
             <div class="mf-face-oval" aria-hidden="true"></div>
             <span class="mf-video-icon">🎥</span>
           </div>
@@ -134,6 +144,7 @@
             <span class="mf-red-dot"></span> Record video
           </button>
           <button type="button" class="mf-link-retake" id="mf-video-retake" hidden>Re-record</button>
+          <input type="file" id="mf-video-input" accept="video/*" capture="user" hidden />
         </div>
 
         <p class="mf-err" id="mf-err-3" hidden></p>
@@ -158,39 +169,10 @@
         <p class="mf-err" id="mf-err-4" hidden></p>
         <button id="mf-submit" class="mf-cta mf-cta-block" type="submit">Create my Mainfeed</button>
         <button class="mf-back-bottom" type="button" data-back="3">← Back</button>
-        <p class="mf-sub" style="text-align:center;margin-top:1rem;">
-          Already have an account? <a href="/login.html">Log in</a>
-        </p>
       </section>
 
     </form>
   </main>
-
-  <!-- ============ Camera modal (photo) ============ -->
-  <div class="mf-cam-modal" id="mf-camera-modal" hidden aria-hidden="true">
-    <video class="mf-cam-video" id="mf-camera-video" playsinline muted autoplay></video>
-    <div class="mf-cam-oval" aria-hidden="true"></div>
-    <div class="mf-cam-hint" id="mf-camera-hint">Line your face inside the oval</div>
-    <div class="mf-cam-controls">
-      <button type="button" class="mf-cam-cancel" id="mf-camera-cancel" aria-label="Cancel">✕</button>
-      <button type="button" class="mf-cam-shutter" id="mf-camera-shutter" aria-label="Take photo"></button>
-      <div style="width:44px"></div>
-    </div>
-  </div>
-
-  <!-- ============ Video recorder modal (5-sec auto) ============ -->
-  <div class="mf-cam-modal" id="mf-video-modal" hidden aria-hidden="true">
-    <video class="mf-cam-video" id="mf-record-video" playsinline muted autoplay></video>
-    <div class="mf-cam-oval" aria-hidden="true"></div>
-    <div class="mf-cam-hint" id="mf-record-hint">Get ready…</div>
-    <div class="mf-cam-countdown" id="mf-record-countdown" hidden></div>
-    <div class="mf-cam-rec-badge" id="mf-record-badge" hidden>● REC</div>
-    <div class="mf-cam-controls">
-      <button type="button" class="mf-cam-cancel" id="mf-record-cancel" aria-label="Cancel">✕</button>
-      <div style="width:76px"></div>
-      <div style="width:44px"></div>
-    </div>
-  </div>
 
   <script type="module">
     const API = location.hostname === 'localhost' ? 'http://localhost:8787' : 'https://api.mainfeed.app';
@@ -201,6 +183,8 @@
     const STEPS = 4;
     let currentStep = 1;
     const captured = { selfie_0: null, selfie_1: null, liveness_video: null };
+    // Per-slot crop state
+    const cropState = { 0: null, 1: null };
 
     function showStep(step, pushHistory = true) {
       currentStep = step;
@@ -211,22 +195,14 @@
       if (pushHistory) history.pushState({ step }, '', `#step-${step}`);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-
     const hashStep = parseInt((location.hash.match(/^#step-(\d+)/) || [])[1] || '1', 10);
     showStep(Math.max(1, Math.min(STEPS, hashStep)), false);
     history.replaceState({ step: currentStep }, '', `#step-${currentStep}`);
-
     window.addEventListener('popstate', (e) => {
-      const targetStep = (e.state && e.state.step) || 1;
-      showStep(targetStep, false);
+      showStep((e.state && e.state.step) || 1, false);
     });
-
-    // Back buttons (under Continue, every step >= 2)
     document.querySelectorAll('[data-back]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const target = Number(b.dataset.back);
-        if (target >= 1) showStep(target);
-      });
+      b.addEventListener('click', () => showStep(Number(b.dataset.back)));
     });
 
     // === Password show/hide ===
@@ -248,220 +224,249 @@
       if (el) { el.hidden = false; el.textContent = msg; }
     }
 
-    // === Selfie slot state helpers ===
-    function setSelfieCaptured(slotIdx, blob) {
-      captured[`selfie_${slotIdx}`] = blob;
+    // ============ Cropper: drag + pinch-zoom an image inside a square ============
+    function startCrop(slotIdx, file) {
       const card = document.querySelector(`.mf-selfie-card[data-slot="${slotIdx}"]`);
-      const preview = card.querySelector('.mf-selfie-preview');
-      const actions = card.querySelector(`[data-actions-for="${slotIdx}"]`);
-      const retake = card.querySelector(`[data-retake="${slotIdx}"]`);
-      const url = URL.createObjectURL(blob);
-      preview.innerHTML = `<img src="${url}" alt="selfie ${slotIdx + 1}" />`;
-      actions.hidden = true;
-      retake.hidden = false;
-    }
-    function resetSelfie(slotIdx) {
-      captured[`selfie_${slotIdx}`] = null;
-      const card = document.querySelector(`.mf-selfie-card[data-slot="${slotIdx}"]`);
-      const preview = card.querySelector('.mf-selfie-preview');
-      const actions = card.querySelector(`[data-actions-for="${slotIdx}"]`);
-      const retake = card.querySelector(`[data-retake="${slotIdx}"]`);
-      preview.innerHTML = `<div class="mf-face-oval" aria-hidden="true"></div><span class="mf-selfie-num">${slotIdx + 1}</span>`;
-      actions.hidden = false;
-      retake.hidden = true;
-    }
-    document.querySelectorAll('[data-retake]').forEach((b) => {
-      b.addEventListener('click', () => resetSelfie(Number(b.dataset.retake)));
-    });
+      const stage = card.querySelector(`[data-stage="${slotIdx}"]`);
+      const actions = card.querySelector(`[data-actions="${slotIdx}"]`);
+      const cropActions = card.querySelector(`[data-crop-actions="${slotIdx}"]`);
 
-    // === Upload-from-device buttons (real button now, not a label) ===
-    document.querySelectorAll('[data-upload-open]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const slotIdx = Number(btn.dataset.uploadOpen);
-        document.querySelector(`input[data-file-input="${slotIdx}"]`).click();
+      // Clean stage of any saved image; rebuild with face-oval guide
+      stage.innerHTML = `
+        <img class="mf-crop-img" draggable="false" alt="" />
+        <div class="mf-face-oval" aria-hidden="true"></div>
+        <span class="mf-crop-hint">Drag and pinch to fit your face</span>
+      `;
+      stage.classList.add('mf-selfie-stage--cropping');
+      actions.hidden = true;
+      cropActions.hidden = false;
+
+      const img = stage.querySelector('.mf-crop-img');
+      const url = URL.createObjectURL(file);
+      const state = { tx: 0, ty: 0, scale: 1, W: 0, nw: 0, nh: 0 };
+      cropState[slotIdx] = state;
+
+      function applyTransform() {
+        img.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
+      }
+      function clamp() {
+        // Keep image covering the square: image rect must not show empty bg
+        const dispW = state.nw * state.scale;
+        const dispH = state.nh * state.scale;
+        const minTx = state.W - dispW;
+        const minTy = state.W - dispH;
+        if (state.tx > 0) state.tx = 0;
+        if (state.ty > 0) state.ty = 0;
+        if (state.tx < minTx) state.tx = minTx;
+        if (state.ty < minTy) state.ty = minTy;
+      }
+
+      img.onload = () => {
+        state.nw = img.naturalWidth;
+        state.nh = img.naturalHeight;
+        state.W = stage.clientWidth;
+        // Initial scale = cover the square (the smaller image dimension fills W)
+        state.scale = Math.max(state.W / state.nw, state.W / state.nh);
+        state.tx = (state.W - state.nw * state.scale) / 2;
+        state.ty = (state.W - state.nh * state.scale) / 2;
+        applyTransform();
+      };
+      img.src = url;
+
+      // Pointer-based pan + pinch
+      const pointers = new Map();
+      let panStart = null;
+      let pinchStart = null;
+
+      stage.addEventListener('pointerdown', (e) => {
+        stage.setPointerCapture(e.pointerId);
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 1) {
+          panStart = { px: e.clientX, py: e.clientY, tx: state.tx, ty: state.ty };
+        } else if (pointers.size === 2) {
+          const pts = [...pointers.values()];
+          const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+          pinchStart = {
+            dist: Math.hypot(dx, dy),
+            scale: state.scale,
+            midX: (pts[0].x + pts[1].x) / 2,
+            midY: (pts[0].y + pts[1].y) / 2,
+            tx: state.tx, ty: state.ty,
+          };
+          panStart = null;
+        }
+      });
+      stage.addEventListener('pointermove', (e) => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 1 && panStart) {
+          state.tx = panStart.tx + (e.clientX - panStart.px);
+          state.ty = panStart.ty + (e.clientY - panStart.py);
+          clamp();
+          applyTransform();
+        } else if (pointers.size === 2 && pinchStart) {
+          const pts = [...pointers.values()];
+          const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+          const newDist = Math.hypot(dx, dy);
+          const ratio = newDist / pinchStart.dist;
+          // Min scale = cover scale; max = 4x cover
+          const cover = Math.max(state.W / state.nw, state.W / state.nh);
+          let next = pinchStart.scale * ratio;
+          if (next < cover) next = cover;
+          if (next > cover * 4) next = cover * 4;
+          state.scale = next;
+          // Zoom around pinch midpoint (keep that point under the fingers)
+          const rect = stage.getBoundingClientRect();
+          const mx = pinchStart.midX - rect.left, my = pinchStart.midY - rect.top;
+          // Scale the offset of midpoint relative to image origin
+          const k = next / pinchStart.scale;
+          state.tx = mx - (mx - pinchStart.tx) * k;
+          state.ty = my - (my - pinchStart.ty) * k;
+          clamp();
+          applyTransform();
+        }
+      });
+      const endPointer = (e) => {
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) pinchStart = null;
+        if (pointers.size === 0) panStart = null;
+      };
+      stage.addEventListener('pointerup', endPointer);
+      stage.addEventListener('pointercancel', endPointer);
+
+      // Mouse-wheel zoom for desktop
+      stage.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const cover = Math.max(state.W / state.nw, state.W / state.nh);
+        const factor = e.deltaY > 0 ? 0.92 : 1.08;
+        let next = state.scale * factor;
+        if (next < cover) next = cover;
+        if (next > cover * 4) next = cover * 4;
+        const rect = stage.getBoundingClientRect();
+        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        const k = next / state.scale;
+        state.tx = mx - (mx - state.tx) * k;
+        state.ty = my - (my - state.ty) * k;
+        state.scale = next;
+        clamp();
+        applyTransform();
+      }, { passive: false });
+    }
+
+    function finalizeCrop(slotIdx) {
+      const state = cropState[slotIdx];
+      if (!state) return;
+      const card = document.querySelector(`.mf-selfie-card[data-slot="${slotIdx}"]`);
+      const stage = card.querySelector(`[data-stage="${slotIdx}"]`);
+      const img = stage.querySelector('.mf-crop-img');
+      const out = document.createElement('canvas');
+      const SIZE = 1024;
+      out.width = SIZE; out.height = SIZE;
+      const ctx = out.getContext('2d');
+      const ratio = SIZE / state.W;
+      ctx.drawImage(
+        img,
+        0, 0, state.nw, state.nh,
+        state.tx * ratio, state.ty * ratio,
+        state.nw * state.scale * ratio,
+        state.nh * state.scale * ratio,
+      );
+      out.toBlob((blob) => {
+        if (!blob) return;
+        captured[`selfie_${slotIdx}`] = blob;
+        const previewUrl = URL.createObjectURL(blob);
+        stage.innerHTML = `<img class="mf-saved-img" src="${previewUrl}" alt="selfie ${slotIdx + 1}" /><span class="mf-selfie-num">${slotIdx + 1}</span>`;
+        stage.classList.remove('mf-selfie-stage--cropping');
+        card.querySelector(`[data-actions="${slotIdx}"]`).hidden = true;
+        card.querySelector(`[data-crop-actions="${slotIdx}"]`).hidden = true;
+        card.querySelector(`[data-retake="${slotIdx}"]`).hidden = false;
+        cropState[slotIdx] = null;
+      }, 'image/jpeg', 0.92);
+    }
+
+    function discardCrop(slotIdx) {
+      const card = document.querySelector(`.mf-selfie-card[data-slot="${slotIdx}"]`);
+      const stage = card.querySelector(`[data-stage="${slotIdx}"]`);
+      stage.innerHTML = `<div class="mf-face-oval" aria-hidden="true"></div><span class="mf-selfie-num">${slotIdx + 1}</span>`;
+      stage.classList.remove('mf-selfie-stage--cropping');
+      card.querySelector(`[data-actions="${slotIdx}"]`).hidden = false;
+      card.querySelector(`[data-crop-actions="${slotIdx}"]`).hidden = true;
+      cropState[slotIdx] = null;
+    }
+
+    function retakeSaved(slotIdx) {
+      captured[`selfie_${slotIdx}`] = null;
+      discardCrop(slotIdx);
+      const card = document.querySelector(`.mf-selfie-card[data-slot="${slotIdx}"]`);
+      card.querySelector(`[data-retake="${slotIdx}"]`).hidden = true;
+    }
+
+    // Wire selfie buttons
+    document.querySelectorAll('[data-take]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const slot = Number(b.dataset.take);
+        document.querySelector(`input[data-camera-input="${slot}"]`).click();
       });
     });
-    document.querySelectorAll('input[data-file-input]').forEach((input) => {
+    document.querySelectorAll('[data-upload]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const slot = Number(b.dataset.upload);
+        document.querySelector(`input[data-upload-input="${slot}"]`).click();
+      });
+    });
+    document.querySelectorAll('input[data-camera-input], input[data-upload-input]').forEach((input) => {
       input.addEventListener('change', () => {
-        const slotIdx = Number(input.dataset.fileInput);
+        const slot = Number(input.dataset.cameraInput ?? input.dataset.uploadInput);
         const f = input.files && input.files[0];
         if (!f) return;
         if (!f.type.startsWith('image/')) return showErr(2, 'That file is not an image.');
-        setSelfieCaptured(slotIdx, f);
+        startCrop(slot, f);
+        input.value = '';  // reset so re-selecting same file fires change again
       });
     });
+    document.querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', () => finalizeCrop(Number(b.dataset.save))));
+    document.querySelectorAll('[data-discard]').forEach((b) => b.addEventListener('click', () => discardCrop(Number(b.dataset.discard))));
+    document.querySelectorAll('[data-retake]').forEach((b) => b.addEventListener('click', () => retakeSaved(Number(b.dataset.retake))));
 
-    // === Camera modal — photo capture ===
-    const cameraModal = document.getElementById('mf-camera-modal');
-    const cameraVideo = document.getElementById('mf-camera-video');
-    const cameraShutter = document.getElementById('mf-camera-shutter');
-    const cameraCancel = document.getElementById('mf-camera-cancel');
-    let cameraStream = null;
-    let cameraTargetSlot = null;
+    // ============ Video step: native camera + post-validate duration ============
+    const videoRecordBtn = document.getElementById('mf-video-record-btn');
+    const videoInput = document.getElementById('mf-video-input');
+    const videoRetake = document.getElementById('mf-video-retake');
+    const videoStage = document.getElementById('mf-video-stage');
 
-    function stopStream(stream) {
-      if (stream) stream.getTracks().forEach((t) => t.stop());
-    }
-
-    async function openCamera(slotIdx) {
-      cameraTargetSlot = slotIdx;
-      try {
-        cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1440 } },
-          audio: false,
-        });
-      } catch (err) {
-        return showErr(2, 'Camera blocked. Tap "Upload from device" instead, or allow camera in browser settings.');
-      }
-      cameraVideo.srcObject = cameraStream;
-      try { await cameraVideo.play(); } catch (_) {}
-      cameraModal.hidden = false;
-      cameraModal.setAttribute('aria-hidden', 'false');
-    }
-    function closeCamera() {
-      cameraModal.hidden = true;
-      cameraModal.setAttribute('aria-hidden', 'true');
-      stopStream(cameraStream); cameraStream = null;
-      cameraVideo.srcObject = null;
-    }
-    cameraCancel.addEventListener('click', closeCamera);
-
-    cameraShutter.addEventListener('click', () => {
-      if (!cameraVideo.videoWidth) return;
-      const vw = cameraVideo.videoWidth;
-      const vh = cameraVideo.videoHeight;
-      // Crop a square covering ~85% of the height centered slightly above the middle
-      // (matching where the face-oval sits in the modal preview).
-      const side = Math.min(vw, Math.floor(vh * 0.85));
-      const sx = Math.floor((vw - side) / 2);
-      const sy = Math.floor(vh * 0.48 - side / 2);
-      const canvas = document.createElement('canvas');
-      canvas.width = side; canvas.height = side;
-      const ctx = canvas.getContext('2d');
-      // Mirror so the saved photo matches the user's preview (front-camera is mirrored).
-      ctx.translate(side, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(cameraVideo, sx, sy, side, side, 0, 0, side, side);
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        setSelfieCaptured(cameraTargetSlot, blob);
-        closeCamera();
-      }, 'image/jpeg', 0.92);
-    });
-    document.querySelectorAll('[data-camera-open]').forEach((btn) => {
-      btn.addEventListener('click', () => openCamera(Number(btn.dataset.cameraOpen)));
-    });
-
-    // === Video recorder modal — 5-sec auto-stop ===
-    const videoModal = document.getElementById('mf-video-modal');
-    const recordVideo = document.getElementById('mf-record-video');
-    const recordCancel = document.getElementById('mf-record-cancel');
-    const recordCountdown = document.getElementById('mf-record-countdown');
-    const recordBadge = document.getElementById('mf-record-badge');
-    const recordHint = document.getElementById('mf-record-hint');
-    const videoRetakeBtn = document.getElementById('mf-video-retake');
-    let recordStream = null;
-    let recorder = null;
-    let recordTimer = null;
-
-    function setVideoCaptured(blob) {
-      captured.liveness_video = blob;
-      const preview = document.getElementById('mf-video-preview');
-      const url = URL.createObjectURL(blob);
-      preview.innerHTML = `<video src="${url}" muted playsinline autoplay loop></video>`;
-      document.getElementById('mf-video-record-btn').hidden = true;
-      videoRetakeBtn.hidden = false;
-    }
-    function resetVideo() {
+    videoRecordBtn.addEventListener('click', () => videoInput.click());
+    videoRetake.addEventListener('click', () => {
       captured.liveness_video = null;
-      const preview = document.getElementById('mf-video-preview');
-      preview.innerHTML = `<div class="mf-face-oval" aria-hidden="true"></div><span class="mf-video-icon">🎥</span>`;
-      document.getElementById('mf-video-record-btn').hidden = false;
-      videoRetakeBtn.hidden = true;
-    }
-    videoRetakeBtn.addEventListener('click', resetVideo);
-
-    async function startRecorderFlow() {
-      try {
-        recordStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 } },
-          audio: false,
-        });
-      } catch (err) {
-        return showErr(3, 'Camera blocked. Allow camera in browser settings, then tap Record again.');
-      }
-      recordVideo.srcObject = recordStream;
-      try { await recordVideo.play(); } catch (_) {}
-      videoModal.hidden = false;
-      videoModal.setAttribute('aria-hidden', 'false');
-      recordCountdown.hidden = true;
-      recordBadge.hidden = true;
-      recordHint.hidden = false;
-      recordHint.textContent = 'Get ready…';
-
-      // 3-2-1 pre-countdown
-      let pre = 3;
-      recordCountdown.hidden = false;
-      recordCountdown.textContent = pre;
-      recordCountdown.classList.remove('mf-cam-countdown--rec');
-      await new Promise((resolve) => {
-        const tick = () => {
-          pre -= 1;
-          if (pre <= 0) { resolve(); return; }
-          recordCountdown.textContent = pre;
-          setTimeout(tick, 1000);
-        };
-        setTimeout(tick, 1000);
+      videoStage.innerHTML = '<div class="mf-face-oval" aria-hidden="true"></div><span class="mf-video-icon">🎥</span>';
+      videoStage.classList.remove('mf-video-stage--captured');
+      videoRecordBtn.hidden = false;
+      videoRetake.hidden = true;
+    });
+    videoInput.addEventListener('change', () => {
+      clearErr(3);
+      const f = videoInput.files && videoInput.files[0];
+      if (!f) return;
+      if (!f.type.startsWith('video/')) return showErr(3, 'That file is not a video.');
+      // Probe duration
+      const probe = document.createElement('video');
+      probe.preload = 'metadata';
+      probe.muted = true;
+      probe.playsInline = true;
+      probe.src = URL.createObjectURL(f);
+      probe.addEventListener('loadedmetadata', () => {
+        const dur = probe.duration;
+        if (!isFinite(dur) || dur < 2.5) return showErr(3, `Too short (${dur.toFixed(1)}s). Record about 5 seconds.`);
+        if (dur > 12) return showErr(3, `Too long (${dur.toFixed(1)}s). Keep it under 10 seconds.`);
+        // Accept
+        captured.liveness_video = f;
+        videoStage.innerHTML = `<video class="mf-saved-img" src="${probe.src}" muted playsinline autoplay loop></video>`;
+        videoStage.classList.add('mf-video-stage--captured');
+        videoRecordBtn.hidden = true;
+        videoRetake.hidden = false;
       });
-
-      // Now record for 5 seconds
-      recordHint.hidden = true;
-      recordBadge.hidden = false;
-      recordCountdown.classList.add('mf-cam-countdown--rec');
-      let left = 5;
-      recordCountdown.textContent = left;
-
-      const chunks = [];
-      const candidates = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-      let mime = '';
-      for (const c of candidates) if (MediaRecorder.isTypeSupported(c)) { mime = c; break; }
-      try {
-        recorder = new MediaRecorder(recordStream, mime ? { mimeType: mime } : undefined);
-      } catch (err) {
-        closeRecorder();
-        return showErr(3, 'This browser cannot record video. Try Chrome or Safari latest.');
-      }
-      recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); });
-      recorder.addEventListener('stop', () => {
-        const blob = new Blob(chunks, { type: mime || 'video/webm' });
-        setVideoCaptured(blob);
-        closeRecorder();
-      });
-      recorder.start();
-
-      recordTimer = setInterval(() => {
-        left -= 1;
-        if (left <= 0) {
-          clearInterval(recordTimer); recordTimer = null;
-          recordCountdown.textContent = '0';
-          try { recorder.stop(); } catch (_) {}
-        } else {
-          recordCountdown.textContent = left;
-        }
-      }, 1000);
-    }
-
-    function closeRecorder() {
-      videoModal.hidden = true;
-      videoModal.setAttribute('aria-hidden', 'true');
-      if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
-      try { recorder && recorder.state !== 'inactive' && recorder.stop(); } catch (_) {}
-      recorder = null;
-      stopStream(recordStream); recordStream = null;
-      recordVideo.srcObject = null;
-    }
-    recordCancel.addEventListener('click', closeRecorder);
-    document.getElementById('mf-video-record-btn').addEventListener('click', startRecorderFlow);
+      probe.addEventListener('error', () => showErr(3, "Couldn't read that video. Try again."));
+      videoInput.value = '';
+    });
 
     // === Step validation + advance ===
     document.querySelector('[data-action="next-1"]').addEventListener('click', () => {
@@ -478,7 +483,7 @@
     });
     document.querySelector('[data-action="next-2"]').addEventListener('click', () => {
       clearErr(2);
-      if (!captured.selfie_0 || !captured.selfie_1) return showErr(2, 'Capture or upload both selfies.');
+      if (!captured.selfie_0 || !captured.selfie_1) return showErr(2, 'Save both selfies (drag/pinch then tap Save).');
       showStep(3);
     });
     document.querySelector('[data-action="next-3"]').addEventListener('click', () => {
@@ -495,7 +500,7 @@
       weak_password: 'Password must be at least 8 characters.',
       invalid_gender: 'Go back and pick male or female.',
       consent_required: 'You need to confirm both the age and Terms boxes.',
-      need_at_least_one_selfie: 'Go back and capture both selfies.',
+      need_at_least_one_selfie: 'Go back and save both selfies.',
       invalid_image_type: 'One of the selfies is not a supported image.',
       selfie_too_large: 'Selfie too large (max 8 MB).',
       handle_or_email_taken: 'That handle or email is already in use.',
@@ -504,7 +509,6 @@
       expected_multipart: 'Bad form submission — try refreshing.',
       liveness_video_too_large: 'Liveness video too large (max 32 MB).',
     };
-
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearErr(4);
@@ -524,10 +528,10 @@
         if (captured.selfie_0) fd.append('selfie_0', captured.selfie_0, 'selfie_0.jpg');
         if (captured.selfie_1) fd.append('selfie_1', captured.selfie_1, 'selfie_1.jpg');
         if (captured.liveness_video) {
-          const ext = (captured.liveness_video.type && captured.liveness_video.type.includes('mp4')) ? 'mp4' : 'webm';
+          const t = captured.liveness_video.type || 'video/mp4';
+          const ext = t.includes('mp4') ? 'mp4' : t.includes('quicktime') ? 'mov' : t.includes('webm') ? 'webm' : 'mp4';
           fd.append('liveness_video', captured.liveness_video, `liveness.${ext}`);
         }
-
         const res = await fetch(`${API}/api/signup`, { method: 'POST', body: fd, credentials: 'include' });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {

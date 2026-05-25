@@ -1885,3 +1885,131 @@ img, svg { display: block; max-width: 100%; }
   cursor: pointer;
 }
 .mf-cam-shutter:active { transform: scale(0.95); }
+
+/* ============ v12: side-by-side square cards + crop UI + proper face oval ============ */
+
+/* Override v11: selfies go back to 2-up square grid */
+.mf-selfie-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.mf-selfie-card {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mf-selfie-stage {
+  position: relative;
+  aspect-ratio: 1 / 1;       /* SQUARE, not 3:4 */
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1d1d23, #16161b);
+  overflow: hidden;
+  touch-action: none;        /* pan/pinch managed in JS */
+}
+.mf-selfie-stage img.mf-saved-img,
+.mf-selfie-stage video.mf-saved-img,
+.mf-video-stage video.mf-saved-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mf-crop-img {
+  position: absolute;
+  top: 0; left: 0;
+  transform-origin: 0 0;
+  user-select: none;
+  pointer-events: none;
+  max-width: none;
+  max-height: none;
+}
+.mf-selfie-stage--cropping {
+  cursor: grab;
+}
+.mf-crop-hint {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.65);
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 3;
+  white-space: nowrap;
+}
+.mf-selfie-num {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  background: rgba(11,11,14,0.7);
+  padding: 3px 7px;
+  border-radius: 6px;
+  z-index: 3;
+}
+
+/* Proper face-oval: 75% wide, 85% tall = realistic head shape */
+.mf-face-oval {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 75%;
+  height: 85%;
+  border: 3px dashed rgba(76,162,181,0.85);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Video card stays full-width (1 column) */
+.mf-video-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 14px;
+  margin-bottom: 20px;
+}
+.mf-video-stage {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1d1d23, #16161b);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mf-video-stage .mf-video-icon {
+  position: relative;
+  z-index: 3;
+  font-size: 48px;
+  opacity: 0.5;
+}
+.mf-video-stage--captured .mf-face-oval,
+.mf-video-stage--captured .mf-video-icon { display: none; }
+
+/* Crop-mode action buttons (Save / Retake) — sit below the stage when cropping */
+.mf-crop-actions {
+  display: flex;
+  gap: 8px;
+}
+.mf-crop-actions .mf-btn-action {
+  flex: 1;
+  padding: 12px 10px;
+  font-size: 14px;
+}
