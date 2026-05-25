@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v12';  // bump 2026-05-25 → signup v24 (no "Uploading photos" stage) + pod render_overlay v2 (smaller caption, DejaVu watermark)
+const CACHE = 'mainfeed-v13';  // bump 2026-05-26 → app v12 (piece-action buttons: tighter spacing + brand-gradient borders)
 
 self.addEventListener('install', () => {
   self.skipWaiting();

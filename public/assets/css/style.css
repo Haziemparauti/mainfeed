@@ -1101,34 +1101,42 @@ body.mf-app {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
+/* Tight to the video edge — was 10px top, now 4px so buttons sit right
+   under the watermark bar */
 .mf-piece-actions {
   display: flex;
-  gap: 0;
-  padding: 10px 16px 14px;
+  gap: 8px;
+  padding: 4px 16px 14px;
 }
 
+/* Brand-gradient border via the padding-box/border-box composite trick:
+   the inner background is solid (matches body), the outer is the brand
+   gradient — border becomes transparent and the gradient shows through */
 .mf-piece-action {
   flex: 1;
-  background: transparent;
-  border: 1px solid var(--border);
+  background:
+    linear-gradient(var(--bg), var(--bg)) padding-box,
+    linear-gradient(90deg, #003f82, #4ca2b5, #ffd27f) border-box;
+  border: 1.5px solid transparent;
   border-radius: var(--radius-sm);
   padding: 12px 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
-  margin: 0 4px;
+  margin: 0;
 }
-
-.mf-piece-action:first-child { margin-left: 0; }
-.mf-piece-action:last-child  { margin-right: 0; }
 
 .mf-piece-action:active {
-  background: var(--surface);
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(90deg, #003f82, #4ca2b5, #ffd27f) border-box;
 }
 
+/* Published state: keep the gradient border but tint the interior */
 .mf-piece-action--active {
-  background: linear-gradient(135deg, rgba(76, 162, 181, 0.22), rgba(255, 210, 127, 0.16));
-  border-color: var(--accent);
+  background:
+    linear-gradient(135deg, rgba(76, 162, 181, 0.22), rgba(255, 210, 127, 0.16)) padding-box,
+    linear-gradient(90deg, #003f82, #4ca2b5, #ffd27f) border-box;
 }
 
 /* ============ APP MENU DRAWER (logout, profile, etc) ============ */
