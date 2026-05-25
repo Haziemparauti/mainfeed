@@ -85,6 +85,8 @@ $('#mf-menu-logout')?.addEventListener('click', async (e) => {
 
 // ============ Feed ============
 
+let _feedPollTimer = null;
+
 async function loadFeed() {
   const feed = $('#mf-feed');
   if (!feed) return;
@@ -92,7 +94,17 @@ async function loadFeed() {
   if (res.status === 401) return showError('not_authenticated');
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return showError(data.error);
-  renderFeed(data.pieces || []);
+  const pieces = data.pieces || [];
+  renderFeed(pieces);
+
+  // If any pieces are still processing on the pod (status='processing'),
+  // poll every 8s until they're all 'ready' or 'failed'. The welcome video
+  // swap on RTX A6000 takes ~3 min, so that's ~22 polls worst case.
+  const hasProcessing = pieces.some((p) => p.status === 'processing');
+  if (_feedPollTimer) clearTimeout(_feedPollTimer);
+  if (hasProcessing) {
+    _feedPollTimer = setTimeout(loadFeed, 8000);
+  }
 }
 
 function renderFeed(pieces) {
@@ -119,9 +131,34 @@ function splitCaption(caption) {
 }
 
 function pieceCard(p) {
+  // Pieces still being generated on the pod show a placeholder card. No
+  // file_url is fetched yet (object doesn't exist in R2 until the swap
+  // callback fires); the feed polls every 8s and re-renders on completion.
+  if (p.status === 'processing') {
+    const { top, bottom } = splitCaption(p.caption);
+    return `
+      <article class="mf-piece mf-piece--processing" data-id="${p.id}" data-status="processing">
+        <div class="mf-piece-stage mf-piece-stage--processing">
+          <div class="mf-piece-spinner" aria-hidden="true"></div>
+          <div class="mf-piece-processing-msg">Your Mainfeed is being made…<br><span style="opacity:0.6;font-size:0.85em">about 3 minutes</span></div>
+          ${top ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(top)}</div>` : ''}
+          ${bottom ? `<div class="mf-piece-overlay mf-piece-overlay--bottom">${escapeHtml(bottom)}</div>` : ''}
+        </div>
+      </article>
+    `;
+  }
+  if (p.status === 'failed') {
+    return `
+      <article class="mf-piece mf-piece--failed" data-id="${p.id}" data-status="failed">
+        <div class="mf-piece-stage mf-piece-stage--failed">
+          <div class="mf-piece-processing-msg">This one didn't render. We'll try again on your next diary entry.</div>
+        </div>
+      </article>
+    `;
+  }
   const { top, bottom } = splitCaption(p.caption);
   const mediaTag = p.type === 'video'
-    ? `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline></video>`
+    ? `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`
     : `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`;
   const pubText = p.public ? 'Unpublish' : 'Publish';
   const pubClass = p.public ? 'mf-piece-action mf-piece-action--active' : 'mf-piece-action';

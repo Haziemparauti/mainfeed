@@ -1193,3 +1193,80 @@ img, svg { display: block; max-width: 100%; }
   line-height: 1.5;
   margin-bottom: 24px;
 }
+
+/* ============ Signup: simplified single-screen form (v5 architecture) ============ */
+.mf-radio-group {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  border: none;
+}
+.mf-radio-group legend {
+  display: block;
+  width: 100%;
+  font-size: 13px;
+  color: var(--text-mute);
+  margin-bottom: 4px;
+}
+.mf-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  flex: 1;
+  justify-content: center;
+  font-size: 15px;
+}
+.mf-radio:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 6px 20px rgba(76, 162, 181, 0.18);
+}
+.mf-radio input {
+  accent-color: var(--accent);
+}
+.mf-err {
+  background: rgba(255, 68, 68, 0.12);
+  color: #ff8a8a;
+  border: 1px solid rgba(255, 68, 68, 0.25);
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin: 12px 0;
+  font-size: 14px;
+}
+
+/* ============ Feed: processing placeholder for in-flight pod swaps ============ */
+.mf-piece-stage--processing,
+.mf-piece-stage--failed {
+  background: linear-gradient(135deg, #16161b 0%, #1d1d23 100%);
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  position: relative;
+}
+.mf-piece-spinner {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 3px solid rgba(76, 162, 181, 0.18);
+  border-top-color: var(--accent);
+  animation: mf-spin 0.9s linear infinite;
+}
+@keyframes mf-spin { to { transform: rotate(360deg); } }
+.mf-piece-processing-msg {
+  color: var(--text-mute);
+  font-size: 14px;
+  text-align: center;
+  padding: 0 24px;
+  line-height: 1.5;
+}
+.mf-piece-stage--failed .mf-piece-processing-msg {
+  color: #ff8a8a;
+}

@@ -225,31 +225,34 @@ async function handleSignup(request, env, origin) {
   const handle = String(form.get('handle') || '').toLowerCase().trim();
   const email = String(form.get('email') || '').toLowerCase().trim();
   const password = String(form.get('password') || '');
+  const gender = String(form.get('gender') || '').toLowerCase().trim();  // 'm' | 'f'
   const consentAge = form.get('consent_age') === 'true';
   const consentTerms = form.get('consent_terms') === 'true';
-  // Profile (onboarding answers) sent as JSON string
-  let profile = null;
+  // Profile (onboarding answers) is now OPTIONAL — locked decision per
+  // feedback_signup_simple_and_embrace_mismatch: drop the 10-question profile,
+  // signup only needs handle/email/password/gender/selfie/age/ToS.
+  let profile = {};
   try {
     const raw = form.get('profile');
-    if (raw) profile = JSON.parse(String(raw));
+    if (raw) profile = JSON.parse(String(raw)) || {};
   } catch (e) {
-    return errResp('invalid_profile', 400, origin);
+    profile = {};
   }
 
   if (!isHandle(handle)) return errResp('invalid_handle', 400, origin);
   if (RESERVED_HANDLES.has(handle)) return errResp('reserved_handle', 400, origin);
   if (!isEmail(email)) return errResp('invalid_email', 400, origin);
   if (!isPassword(password)) return errResp('weak_password', 400, origin);
+  if (gender !== 'm' && gender !== 'f') return errResp('invalid_gender', 400, origin, { hint: 'gender must be "m" or "f"' });
   if (!consentAge || !consentTerms) return errResp('consent_required', 400, origin);
-  if (!profile || typeof profile !== 'object') return errResp('profile_required', 400, origin);
 
-  // Collect selfies
+  // Collect selfies — accept 1–10 (more is better for face-swap source quality).
   const selfies = [];
   for (let i = 0; i < 10; i++) {
     const f = form.get(`selfie_${i}`);
     if (f && typeof f.arrayBuffer === 'function') selfies.push(f);
   }
-  if (selfies.length < 5) return errResp('need_5_selfies', 400, origin);
+  if (selfies.length < 1) return errResp('need_at_least_one_selfie', 400, origin);
 
   // Validate file types + sizes
   const MAX_SELFIE_BYTES = 8 * 1024 * 1024; // 8MB per selfie
@@ -269,17 +272,21 @@ async function handleSignup(request, env, origin) {
   const userId = uid();
   const ts = now();
 
-  // consent_ai is folded into Terms acceptance — both are true when consentTerms is true
-  const profileJson = JSON.stringify({ onboarding: profile, checkins: [] });
+  // First selfie is the primary face source for swaps + bucket detection
+  const primarySelfieKey = `selfies/${userId}/0.${(selfies[0].type.split('/')[1] || 'jpg').toLowerCase().replace('jpeg', 'jpg')}`;
+
+  // Stash gender + bucket inside the profile JSON too (for legacy callers that read profile)
+  const profileJson = JSON.stringify({ onboarding: profile, gender, checkins: [] });
   await env.DB.prepare(
     `INSERT INTO users
        (id, handle, email, password_hash, created_at,
         liveness_verified, consent_18, consent_ai, consent_terms,
-        selfies_count, plan, daily_pieces_count, daily_pieces_reset_at, profile)
-     VALUES (?, ?, ?, ?, ?, 0, 1, 1, 1, ?, 'free', 0, ?, ?)`
-  ).bind(userId, handle, email, passwordHash, ts, selfies.length, ts, profileJson).run();
+        selfies_count, plan, daily_pieces_count, daily_pieces_reset_at, profile,
+        primary_selfie_r2_key)
+     VALUES (?, ?, ?, ?, ?, 0, 1, 1, 1, ?, 'free', 0, ?, ?, ?)`
+  ).bind(userId, handle, email, passwordHash, ts, selfies.length, ts, profileJson, primarySelfieKey).run();
 
-  // Upload selfies to R2
+  // Upload selfies to R2 (SELFIES bucket)
   for (let i = 0; i < selfies.length; i++) {
     const s = selfies[i];
     const ext = (s.type.split('/')[1] || 'jpg').toLowerCase().replace('jpeg', 'jpg');
@@ -291,8 +298,28 @@ async function handleSignup(request, env, origin) {
 
   const session = await createSession(env, userId);
 
-  // Fire-and-forget welcome piece (don't block signup response on it — but await briefly so it lands soon)
-  await generateWelcomePiece(env, userId, handle, now() + 1);
+  // Appearance-bucket detection (best-effort — don't fail signup if Llama Vision flakes)
+  let appearanceBucket = null;
+  try {
+    const det = await detectAppearanceFromR2(env, primarySelfieKey, 'SELFIES', gender);
+    if (det && det.bucket) {
+      appearanceBucket = det.bucket;
+      await env.DB.prepare('UPDATE users SET appearance_bucket = ? WHERE id = ?')
+        .bind(appearanceBucket, userId).run();
+    }
+  } catch (err) {
+    console.error('appearance-detect-failed', err);
+  }
+
+  // Queue the welcome VIDEO swap (DreamID-V on the RunPod pod). Don't block the
+  // signup response on the swap (~3 min); insert a 'processing' piece now and
+  // the worker's /api/swap/complete callback flips it to 'ready' when the pod
+  // finishes uploading to R2.
+  try {
+    await generateWelcomeVideoSwap(env, userId, handle, gender, primarySelfieKey, appearanceBucket, ts);
+  } catch (err) {
+    console.error('welcome video swap queue failed', err);
+  }
 
   return json(
     { ok: true, user: { id: userId, handle, email } },
@@ -368,7 +395,7 @@ async function handleFeed(request, env, origin) {
   const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10));
 
   const rows = await env.DB.prepare(
-    `SELECT id, type, caption, mime_type, width, height, duration, created_at, public
+    `SELECT id, type, caption, mime_type, width, height, duration, created_at, public, status
      FROM generated_pieces
      WHERE user_id = ? AND deleted_at IS NULL
      ORDER BY created_at DESC LIMIT ? OFFSET ?`
@@ -385,6 +412,7 @@ async function handleFeed(request, env, origin) {
     created_at: p.created_at,
     file_url: `/api/piece/${p.id}/file`,
     public: !!p.public,
+    status: p.status || 'ready',
   }));
 
   return json({ ok: true, pieces, total: pieces.length }, {}, origin);
@@ -827,6 +855,8 @@ async function generatePiecesForDiary(env, userId, handle, diaryEntryId, diaryCo
 }
 
 // Welcome piece — random POV scenario, no LLM calls (faster + consistent), face-conditioned via PuLID
+// LEGACY — Flux+PuLID image welcome. Kept for backward-compat/fallback only.
+// New signups use generateWelcomeVideoSwap() below.
 async function generateWelcomePiece(env, userId, handle, ts) {
   try {
     const selfieDataUrl = await getUserSelfieDataUrl(env, userId);
@@ -852,6 +882,175 @@ async function generateWelcomePiece(env, userId, handle, ts) {
     console.error('welcome piece generation failed', err);
     return null;
   }
+}
+
+// Self-aware meta-humor caption pool for the welcome video (per locked welcome
+// architecture decision). One is picked at random on signup.
+const WELCOME_VIDEO_CAPTIONS = [
+  'POV: just signed up for Mainfeed and already regret it',
+  "Me telling Mainfeed AI to make me look cool. Mainfeed AI:",
+  "POV: discovering this app means I'll never sleep again",
+  "Me: I'll only use this once. Also me, 47 videos later:",
+  'POV: just realized everything in my feed is me',
+  "Me explaining why I have 50 cop videos of me on my camera roll",
+];
+
+function pickWelcomeCaption() {
+  return WELCOME_VIDEO_CAPTIONS[Math.floor(Math.random() * WELCOME_VIDEO_CAPTIONS.length)];
+}
+
+// Queue the welcome video swap on the RunPod pod. Inserts a `processing`
+// generated_pieces row immediately; the pod's /api/swap/complete callback
+// flips it to `ready` (or `failed`) once the mp4 lands in R2.
+async function generateWelcomeVideoSwap(env, userId, handle, gender, primarySelfieKey, appearanceBucket, ts) {
+  if (!env.SWAP_POD_URL || !env.SWAP_POD_SECRET) {
+    console.warn('welcome-video skipped: SWAP_POD_URL / SWAP_POD_SECRET not set');
+    return null;
+  }
+
+  // Pick a stock clip for this user. Prefer bucket-matched if available;
+  // otherwise fall back to any active clip of the user's gender for any scenario.
+  let stock = null;
+  if (appearanceBucket) {
+    stock = await env.DB.prepare(
+      `SELECT id, filename, r2_key, scenario, captions FROM stock_library
+       WHERE active = 1 AND gender = ? AND appearance_bucket = ?
+       ORDER BY RANDOM() LIMIT 1`
+    ).bind(gender, appearanceBucket).first();
+  }
+  if (!stock) {
+    stock = await env.DB.prepare(
+      `SELECT id, filename, r2_key, scenario, captions FROM stock_library
+       WHERE active = 1 AND gender = ?
+       ORDER BY RANDOM() LIMIT 1`
+    ).bind(gender).first();
+  }
+  if (!stock) {
+    console.warn('welcome-video skipped: no active stock clip available');
+    return null;
+  }
+
+  // Build a signed-ish public stock URL the pod can fetch over plain HTTPS.
+  // The mainfeed-stock bucket exposes /public/stock/<filename>.mp4 (no auth).
+  const stockBaseName = String(stock.filename || '').replace(/[^A-Za-z0-9_.-]/g, '_');
+  const targetVideoUrl = `https://api.mainfeed.app/public/stock/${stockBaseName}.mp4`;
+
+  // The pod needs a public URL it can fetch the user's selfie from. We only have
+  // a public route for the STOCK bucket today (/public/stock/<filename> rejects
+  // '/' in the filename for safety). Workaround: copy the primary selfie to a
+  // flat filename inside mainfeed-stock so the pod can grab it via the existing
+  // route. Cleanup of this temp copy is a follow-up (acceptable to leak for now
+  // because keys are user-id-scoped and selfie data is not sensitive beyond what
+  // already goes to the pod for swap).
+  const sel = await env.SELFIES.get(primarySelfieKey);
+  if (!sel) {
+    console.error('welcome-video skipped: primary selfie missing in R2', { primarySelfieKey });
+    return null;
+  }
+  const tempStockKey = `stock/_welcome_src_${userId}.jpg`;
+  await env.STOCK.put(tempStockKey, sel.body, {
+    httpMetadata: { contentType: 'image/jpeg' },
+  });
+  const sourceImageUrlFlat = `https://api.mainfeed.app/public/stock/_welcome_src_${userId}.jpg`;
+
+  const pieceId = uid();
+  const r2Key = `generated/${pieceId}.mp4`;  // matches the pod's default output_r2_key shape
+  const caption = pickWelcomeCaption();
+
+  // Insert pending generated_pieces row BEFORE firing pod, so the feed shows a
+  // placeholder immediately and the callback has a row to update.
+  await env.DB.prepare(
+    `INSERT INTO generated_pieces
+       (id, user_id, diary_entry_id, type, caption, r2_key, mime_type,
+        generation_provider, generation_prompt, created_at, download_count, share_count,
+        status, scenario, stock_library_id)
+     VALUES (?, ?, NULL, 'video', ?, ?, 'video/mp4', 'dreamidv-faster', NULL, ?, 0, 0, 'processing', ?, ?)`
+  ).bind(pieceId, userId, caption, r2Key, ts, stock.scenario || null, stock.id).run();
+
+  // Fire pod swap. request_id = pieceId so the callback finds the row directly.
+  const payload = {
+    request_id: pieceId,
+    source_image_url: sourceImageUrlFlat,
+    target_video_url: targetVideoUrl,
+    callback_url: 'https://api.mainfeed.app/api/swap/complete',
+    output_r2_key: r2Key,
+    sample_steps: 16,
+    sample_guide_scale_img: 4.0,
+    size: '832*480',
+  };
+
+  const podSwapUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';
+  try {
+    const res = await fetch(podSwapUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.SWAP_POD_SECRET}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      await env.DB.prepare(
+        `UPDATE generated_pieces SET status = 'failed', caption = ? WHERE id = ?`
+      ).bind(`(welcome failed — pod ${res.status}) ${caption}`, pieceId).run();
+      console.error('welcome-video pod queue failed', res.status, errText.slice(0, 200));
+    }
+  } catch (err) {
+    await env.DB.prepare(
+      `UPDATE generated_pieces SET status = 'failed', caption = ? WHERE id = ?`
+    ).bind(`(welcome failed — pod unreachable) ${caption}`, pieceId).run();
+    console.error('welcome-video pod fetch exception', err);
+  }
+
+  return pieceId;
+}
+
+// Internal helper: classify a selfie stored in an R2 bucket binding into an appearance bucket.
+// Returns null on any error; caller is expected to tolerate that.
+async function detectAppearanceFromR2(env, r2Key, bucketName, gender) {
+  if (!env.AI) return null;
+  const bucket = env[bucketName] || env.SELFIES || env.STOCK;
+  if (!bucket) return null;
+  const obj = await bucket.get(r2Key);
+  if (!obj) return null;
+  const imageBytes = new Uint8Array(await obj.arrayBuffer());
+
+  const aiArgs = {
+    prompt: APPEARANCE_PROMPT,
+    image: [...imageBytes],
+    max_tokens: 256,
+  };
+
+  let aiResp;
+  try {
+    aiResp = await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', aiArgs);
+  } catch (err) {
+    const msg = String(err).slice(0, 800);
+    if (msg.includes("5016") || msg.toLowerCase().includes("must submit the prompt 'agree'")) {
+      try {
+        await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', { prompt: 'agree' });
+        aiResp = await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', aiArgs);
+      } catch (_) { return null; }
+    } else {
+      return null;
+    }
+  }
+
+  let attrs = null;
+  if (aiResp && typeof aiResp === 'object') {
+    if (aiResp.response && typeof aiResp.response === 'object') {
+      attrs = aiResp.response;
+    } else {
+      const cand = (typeof aiResp.response === 'string' ? aiResp.response
+                   : typeof aiResp.result === 'string' ? aiResp.result : '').trim();
+      const m = cand.match(/\{[\s\S]*\}/);
+      if (m) { try { attrs = JSON.parse(m[0]); } catch (_) {} }
+    }
+  }
+  if (!attrs || !attrs.gender) return null;
+  if (gender === 'm' || gender === 'f') attrs.gender = gender;
+  return _pickBucket(attrs);
 }
 
 // ============ Check-in cards (popup questions to deepen profile) ============
@@ -1616,14 +1815,39 @@ async function handleSwapComplete(request, env, origin) {
   if (!requestId || !status) return errResp('missing_fields', 400, origin);
 
   console.log('[swap.complete]', JSON.stringify({
-    request_id: requestId,
-    status,
-    elapsed_sec: body.elapsed_sec,
-    error: body.error,
-    output_bytes: body.output_bytes,
-    r2_bucket: body.r2_bucket,
-    r2_key: body.r2_key,
+    request_id: requestId, status,
+    elapsed_sec: body.elapsed_sec, error: body.error,
+    output_bytes: body.output_bytes, r2_bucket: body.r2_bucket, r2_key: body.r2_key,
   }));
+
+  // Production wiring: the worker's generated_pieces row was inserted with
+  // status='processing' and id=requestId. Flip it to 'ready' or 'failed'.
+  const piece = await env.DB.prepare(
+    'SELECT id, user_id, status FROM generated_pieces WHERE id = ?'
+  ).bind(requestId).first();
+  if (piece) {
+    if (status === 'completed') {
+      await env.DB.prepare(
+        `UPDATE generated_pieces
+           SET status = 'ready'
+         WHERE id = ?`
+      ).bind(requestId).run();
+    } else {
+      const errMsg = String(body.error || 'pod_failed').slice(0, 400);
+      await env.DB.prepare(
+        `UPDATE generated_pieces SET status = 'failed' WHERE id = ?`
+      ).bind(requestId).run();
+      console.error('[swap.complete] piece marked failed', { request_id: requestId, error: errMsg });
+    }
+
+    // Best-effort cleanup of the temporary public selfie copy we made for the
+    // pod to fetch (welcome flow). Safe to ignore failure.
+    try {
+      await env.STOCK.delete(`stock/_welcome_src_${piece.user_id}.jpg`);
+    } catch (_) {}
+  } else {
+    console.warn('[swap.complete] no matching piece for request_id', requestId);
+  }
 
   return json({ ok: true, ack: requestId }, {}, origin);
 }
