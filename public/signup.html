@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=19" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=19" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=20" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=20" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=19" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=19" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=20" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=20" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -171,6 +171,15 @@
       </section>
 
     </form>
+
+    <!-- ============ Progress screen (replaces form after submit succeeds) ============ -->
+    <section class="mf-progress-screen" id="mf-progress-screen" hidden>
+      <h1>Creating your Mainfeed</h1>
+      <div class="mf-progress-bar">
+        <div class="mf-progress-fill" id="mf-progress-fill"></div>
+      </div>
+      <div class="mf-progress-pct" id="mf-progress-pct">0%</div>
+    </section>
   </main>
 
   <!-- ============ Custom 10-sec recorder modal (auto-starts on open) ============ -->
@@ -638,6 +647,81 @@
       expected_multipart: 'Bad form submission — try refreshing.',
       liveness_video_too_large: 'Liveness video too large (max 32 MB).',
     };
+    async function runProgressUntilReady() {
+      // Hide form + step dots, swap in the progress screen.
+      form.hidden = true;
+      progress.hidden = true;
+      const screen = document.getElementById('mf-progress-screen');
+      const fill = document.getElementById('mf-progress-fill');
+      const pctEl = document.getElementById('mf-progress-pct');
+      screen.hidden = false;
+      window.scrollTo({ top: 0 });
+
+      // Estimated total time: ~3 min on the RTX A6000 community pod.
+      // Bar fills smoothly to 95% over this window. If the swap takes longer,
+      // we cap at 95% and keep polling. If it's faster, we jump to 100% on
+      // detection.
+      const TARGET_SECONDS = 180;
+      const startTime = Date.now();
+      let pct = 0;
+      let ready = false;
+      let readyPiece = null;
+
+      const tick = setInterval(() => {
+        if (ready) return;
+        const elapsed = (Date.now() - startTime) / 1000;
+        pct = Math.min(95, (elapsed / TARGET_SECONDS) * 95);
+        fill.style.width = pct.toFixed(1) + '%';
+        pctEl.textContent = Math.round(pct) + '%';
+      }, 100);
+
+      // Poll the feed every 5s until at least one piece is ready. If the pod
+      // reports a failed swap or 10 minutes elapse with no ready piece, we
+      // jump to the feed anyway — the feed handles 'processing'/'failed'
+      // status cards on its own.
+      const MAX_WAIT_MS = 600000;
+      while (!ready) {
+        await new Promise((r) => setTimeout(r, 5000));
+        if (Date.now() - startTime > MAX_WAIT_MS) break;
+        try {
+          const res = await fetch(`${API}/api/feed`, { credentials: 'include' });
+          if (res.ok) {
+            const data = await res.json();
+            const pieces = data.pieces || [];
+            const found = pieces.find((p) => p.status === 'ready');
+            if (found) { readyPiece = found; ready = true; break; }
+            // If every piece is in a terminal-failed state, stop waiting.
+            if (pieces.length > 0 && pieces.every((p) => p.status === 'failed')) break;
+          }
+        } catch (_) { /* keep polling */ }
+      }
+
+      // Preload the rendered video into HTTP cache so the feed opens with it
+      // already buffered. Swallow errors — worst case the feed fetches it on
+      // its own when app.html mounts.
+      if (readyPiece && readyPiece.file_url) {
+        pctEl.textContent = 'Loading video…';
+        try {
+          const r = await fetch(`${API}${readyPiece.file_url}`, { credentials: 'include' });
+          if (r.ok) await r.blob();
+        } catch (_) {}
+      }
+
+      // Animate to 100% over 0.6s before redirect so the bar reads true.
+      clearInterval(tick);
+      const startPct = pct;
+      const t0 = Date.now();
+      await new Promise((resolve) => {
+        const fi = setInterval(() => {
+          const t = Math.min(1, (Date.now() - t0) / 600);
+          const v = startPct + (100 - startPct) * t;
+          fill.style.width = v.toFixed(1) + '%';
+          pctEl.textContent = Math.round(v) + '%';
+          if (t >= 1) { clearInterval(fi); resolve(); }
+        }, 30);
+      });
+    }
+
     function setSubmitStage(msg) {
       submitBtn.textContent = msg;
       // Also surface in the error slot in muted form, so we have a second
@@ -706,7 +790,11 @@
           submitBtn.textContent = 'Create my Mainfeed';
           return;
         }
-        setSubmitStage('Done! Loading your feed…');
+        // Account is created and welcome-video swap is queued on the pod.
+        // Show the progress screen, poll until the piece is ready, preload
+        // the video file into HTTP cache, then redirect so the feed opens
+        // with the video already buffered.
+        await runProgressUntilReady();
         location.href = '/app.html';
       } catch (err) {
         clearSubmitStage();

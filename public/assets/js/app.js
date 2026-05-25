@@ -1,4 +1,4 @@
-// Mainfeed — main app (feed + diary + download/share with caption baked on)
+// Mainfeed — main app (feed + download/share with caption baked on top)
 
 const API = window.location.hostname === 'localhost'
   ? 'http://localhost:8787'
@@ -8,9 +8,6 @@ const $ = (q) => document.querySelector(q);
 
 const ERROR_MESSAGES = {
   not_authenticated: 'Session expired. Logging out…',
-  empty_entry: 'Tell us something first.',
-  too_long: 'Keep it under 500 characters.',
-  rate_limited: 'Slow down — too many entries. Try in a bit.',
 };
 
 function showError(code) {
@@ -40,8 +37,6 @@ let currentUser = null;
     currentUser = me.user;
     paintMe(currentUser);
     await loadFeed();
-    // Show check-in card if it's time
-    maybeShowCheckin();
   } catch (err) {
     console.error('boot error', err);
     window.location.href = '/login.html';
@@ -97,9 +92,8 @@ async function loadFeed() {
   const pieces = data.pieces || [];
   renderFeed(pieces);
 
-  // If any pieces are still processing on the pod (status='processing'),
-  // poll every 8s until they're all 'ready' or 'failed'. The welcome video
-  // swap on RTX A6000 takes ~3 min, so that's ~22 polls worst case.
+  // If any pieces are still processing on the pod, poll every 8s until all
+  // are 'ready' or 'failed'. Welcome video swap takes ~3 min on RTX A6000.
   const hasProcessing = pieces.some((p) => p.status === 'processing');
   if (_feedPollTimer) clearTimeout(_feedPollTimer);
   if (hasProcessing) {
@@ -113,36 +107,23 @@ function renderFeed(pieces) {
     feed.innerHTML = `
       <div class="mf-feed-empty">
         <h2>Your Mainfeed is empty</h2>
-        <p>Tell us about your day above and AI will make content about you.</p>
+        <p>Your first piece is on its way.</p>
       </div>`;
     return;
   }
   feed.innerHTML = pieces.map(pieceCard).join('');
 }
 
-// Split a caption on ' / ' into [top, bottom]. If no delimiter, all goes to bottom.
-function splitCaption(caption) {
-  const c = String(caption || '');
-  const idx = c.indexOf(' / ');
-  if (idx >= 0) {
-    return { top: c.slice(0, idx).trim(), bottom: c.slice(idx + 3).trim() };
-  }
-  return { top: '', bottom: c.trim() };
-}
-
 function pieceCard(p) {
-  // Pieces still being generated on the pod show a placeholder card. No
-  // file_url is fetched yet (object doesn't exist in R2 until the swap
-  // callback fires); the feed polls every 8s and re-renders on completion.
+  // Pieces still being generated on the pod show a placeholder card.
   if (p.status === 'processing') {
-    const { top, bottom } = splitCaption(p.caption);
+    const caption = String(p.caption || '').trim();
     return `
       <article class="mf-piece mf-piece--processing" data-id="${p.id}" data-status="processing">
         <div class="mf-piece-stage mf-piece-stage--processing">
           <div class="mf-piece-spinner" aria-hidden="true"></div>
           <div class="mf-piece-processing-msg">Your Mainfeed is being made…<br><span style="opacity:0.6;font-size:0.85em">about 3 minutes</span></div>
-          ${top ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(top)}</div>` : ''}
-          ${bottom ? `<div class="mf-piece-overlay mf-piece-overlay--bottom">${escapeHtml(bottom)}</div>` : ''}
+          ${caption ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(caption)}</div>` : ''}
         </div>
       </article>
     `;
@@ -156,18 +137,17 @@ function pieceCard(p) {
       </article>
     `;
   }
-  const { top, bottom } = splitCaption(p.caption);
+  const caption = String(p.caption || '').trim();
   const mediaTag = p.type === 'video'
     ? `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`
     : `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`;
   const pubText = p.public ? 'Unpublish' : 'Publish';
   const pubClass = p.public ? 'mf-piece-action mf-piece-action--active' : 'mf-piece-action';
   return `
-    <article class="mf-piece" data-id="${p.id}" data-caption="${escapeHtml(p.caption || '')}" data-url="${API}${p.file_url}" data-public="${p.public ? '1' : '0'}">
+    <article class="mf-piece" data-id="${p.id}" data-caption="${escapeHtml(caption)}" data-url="${API}${p.file_url}" data-public="${p.public ? '1' : '0'}">
       <div class="mf-piece-stage">
         ${mediaTag}
-        ${top ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(top)}</div>` : ''}
-        ${bottom ? `<div class="mf-piece-overlay mf-piece-overlay--bottom">${escapeHtml(bottom)}</div>` : ''}
+        ${caption ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(caption)}</div>` : ''}
         <div class="mf-piece-watermark">Mainfeed.app · @${escapeHtml(currentUser?.handle || '')}</div>
       </div>
       <div class="mf-piece-actions">
@@ -210,7 +190,6 @@ async function togglePublish(id, card, btn) {
     btn.textContent = nowPublic ? 'Unpublish' : 'Publish';
     btn.classList.toggle('mf-piece-action--active', nowPublic);
     if (nowPublic) {
-      // Quick toast — they can find it at /@handle
       showToast(`Live at mainfeed.app/@${currentUser?.handle || ''}`);
     }
   } finally {
@@ -305,8 +284,7 @@ async function loadImageBlob(url) {
 
 async function renderPieceWithCaption(card) {
   const url = card.dataset.url;
-  const caption = card.dataset.caption || '';
-  const { top, bottom } = splitCaption(caption);
+  const caption = (card.dataset.caption || '').trim();
   const blob = await loadImageBlob(url);
   const imgBitmap = await createImageBitmap(blob);
   const canvas = document.createElement('canvas');
@@ -315,7 +293,7 @@ async function renderPieceWithCaption(card) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(imgBitmap, 0, 0);
 
-  drawMemeCaption(ctx, canvas.width, canvas.height, top, bottom);
+  if (caption) drawCaptionTop(ctx, canvas.width, canvas.height, caption);
   drawWatermark(ctx, canvas.width, canvas.height, `Mainfeed.app · @${currentUser?.handle || ''}`);
 
   return await new Promise((resolve) =>
@@ -323,7 +301,7 @@ async function renderPieceWithCaption(card) {
   );
 }
 
-function drawMemeCaption(ctx, w, h, top, bottom) {
+function drawCaptionTop(ctx, w, h, text) {
   const fontSize = Math.round(h * 0.06);
   const padding = Math.round(w * 0.05);
   const maxWidth = w - padding * 2;
@@ -333,30 +311,14 @@ function drawMemeCaption(ctx, w, h, top, bottom) {
   ctx.lineWidth = Math.max(2, fontSize * 0.08);
   ctx.lineJoin = 'round';
   ctx.textAlign = 'center';
-
-  if (top) {
-    ctx.textBaseline = 'top';
-    drawWrappedText(ctx, top.toUpperCase(), w / 2, padding, maxWidth, fontSize * 1.1);
-  }
-  if (bottom) {
-    ctx.textBaseline = 'bottom';
-    drawWrappedTextFromBottom(ctx, bottom.toUpperCase(), w / 2, h - padding, maxWidth, fontSize * 1.1);
-  }
+  ctx.textBaseline = 'top';
+  drawWrappedText(ctx, text.toUpperCase(), w / 2, padding, maxWidth, fontSize * 1.1);
 }
 
 function drawWrappedText(ctx, text, x, startY, maxWidth, lineHeight) {
   const lines = wrapLines(ctx, text, maxWidth);
   lines.forEach((line, i) => {
     const y = startY + i * lineHeight;
-    ctx.strokeText(line, x, y);
-    ctx.fillText(line, x, y);
-  });
-}
-
-function drawWrappedTextFromBottom(ctx, text, x, endY, maxWidth, lineHeight) {
-  const lines = wrapLines(ctx, text, maxWidth);
-  lines.forEach((line, i) => {
-    const y = endY - (lines.length - 1 - i) * lineHeight;
     ctx.strokeText(line, x, y);
     ctx.fillText(line, x, y);
   });
@@ -393,164 +355,6 @@ function drawWatermark(ctx, w, h, text) {
   ctx.strokeText(text, w - padX, h - padY);
   ctx.fillText(text, w - padX, h - padY);
 }
-
-// ============ Check-in card (top of feed) ============
-
-async function maybeShowCheckin() {
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const lastShown = localStorage.getItem('mf_checkin_last_date');
-    const isFirstOpenToday = lastShown !== today;
-    // First open today: always show. Subsequent opens same day: 30% chance.
-    if (!isFirstOpenToday && Math.random() > 0.3) return;
-
-    const res = await fetch(`${API}/api/checkin/questions`, { credentials: 'include' });
-    if (!res.ok) return;
-    const data = await res.json().catch(() => ({}));
-    const questions = data?.questions || [];
-    if (questions.length === 0) return;
-
-    renderCheckinCard(questions);
-    localStorage.setItem('mf_checkin_last_date', today);
-  } catch (err) {
-    console.warn('checkin maybe-show failed', err);
-  }
-}
-
-function renderCheckinCard(questions) {
-  const feed = $('#mf-feed');
-  if (!feed) return;
-  const card = document.createElement('section');
-  card.className = 'mf-checkin-card';
-  card.innerHTML = `
-    <div class="mf-checkin-head">
-      <h3>tell us a bit more</h3>
-      <button class="mf-checkin-close" aria-label="Skip">×</button>
-    </div>
-    <div class="mf-checkin-body"></div>
-    <button class="mf-cta mf-cta-block" data-checkin-submit>Save</button>
-  `;
-  const body = card.querySelector('.mf-checkin-body');
-  questions.forEach((q, i) => {
-    const block = document.createElement('div');
-    block.dataset.checkinQid = q.id;
-    block.dataset.checkinType = q.type;
-    let inputs = '';
-    if (q.type === 'single') {
-      inputs = `<div class="mf-checkin-opts">${
-        q.options.map((o) => `<button type="button" class="mf-checkin-opt" data-checkin-val="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join('')
-      }</div>`;
-    } else if (q.type === 'text') {
-      inputs = `<input type="text" class="mf-checkin-text" placeholder="${escapeHtml(q.placeholder || '')}" maxlength="200" />`;
-    }
-    block.innerHTML = `<div class="mf-checkin-q">${escapeHtml(q.text)}</div>${inputs}`;
-    body.appendChild(block);
-  });
-  feed.insertBefore(card, feed.firstChild);
-
-  // Single-choice selection
-  card.addEventListener('click', (e) => {
-    const opt = e.target.closest('[data-checkin-val]');
-    if (opt) {
-      const block = opt.closest('[data-checkin-qid]');
-      block.querySelectorAll('[data-checkin-val]').forEach((b) => (b.dataset.selected = 'false'));
-      opt.dataset.selected = 'true';
-      return;
-    }
-    if (e.target.closest('.mf-checkin-close')) {
-      card.remove();
-      return;
-    }
-    if (e.target.closest('[data-checkin-submit]')) {
-      submitCheckin(card);
-    }
-  });
-}
-
-async function submitCheckin(card) {
-  const answers = {};
-  card.querySelectorAll('[data-checkin-qid]').forEach((block) => {
-    const qid = block.dataset.checkinQid;
-    const type = block.dataset.checkinType;
-    if (type === 'single') {
-      const picked = block.querySelector('[data-selected="true"]');
-      if (picked) answers[qid] = picked.dataset.checkinVal;
-    } else if (type === 'text') {
-      const val = block.querySelector('.mf-checkin-text')?.value.trim();
-      if (val) answers[qid] = val;
-    }
-  });
-  if (Object.keys(answers).length === 0) {
-    alert('Pick or type at least one answer (or just close the card).');
-    return;
-  }
-  const submitBtn = card.querySelector('[data-checkin-submit]');
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Saving…';
-  try {
-    const res = await fetch(`${API}/api/checkin/submit`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(`Couldn't save (${data.error || 'unknown'}). Try again.`);
-      return;
-    }
-    card.remove();
-    await loadFeed();
-  } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Save';
-  }
-}
-
-// ============ Diary ============
-
-const diaryInput = $('#mf-diary-input');
-const diaryLen = $('#mf-diary-len');
-if (diaryInput && diaryLen) {
-  diaryInput.addEventListener('input', () => {
-    diaryLen.textContent = String(diaryInput.value.length);
-  });
-}
-
-$('#mf-diary-submit')?.addEventListener('click', async () => {
-  const content = diaryInput.value.trim();
-  if (!content) return showError('empty_entry');
-  const btn = $('#mf-diary-submit');
-  btn.disabled = true;
-  const orig = btn.textContent;
-  btn.textContent = 'Making content…';
-  try {
-    const res = await fetch(`${API}/api/diary/create`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return showError(data.error);
-    diaryInput.value = '';
-    diaryLen.textContent = '0';
-    if (data.pieces_generated === 0) {
-      alert('Hmm, generation hiccupped. Try again in a sec.');
-    }
-    await loadFeed();
-  } finally {
-    btn.disabled = false;
-    btn.textContent = orig;
-  }
-});
-
-// ============ Logout (call from console for now, menu wiring later) ============
-
-window.mfLogout = async function () {
-  await fetch(`${API}/api/logout`, { method: 'POST', credentials: 'include' });
-  window.location.href = '/';
-};
 
 // Service worker
 if ('serviceWorker' in navigator) {

@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v6';  // bump 2026-05-25 → signup v19 (novalidate form + visible submit stages + 90s timeout)
+const CACHE = 'mainfeed-v7';  // bump 2026-05-25 → app v7 (strip diary+check-in, caption top-only) + signup v20 (progress screen)
 
 self.addEventListener('install', () => {
   self.skipWaiting();
