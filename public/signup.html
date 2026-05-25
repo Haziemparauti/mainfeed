@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=8" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=8" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=9" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=9" />
 </head>
 <body class="mf-auth">
 
@@ -16,8 +16,8 @@
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"></polyline></svg>
     </button>
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=8" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=8" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=9" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=9" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -48,31 +48,28 @@
         <div class="mf-field mf-field-password">
           <input type="password" id="mf-password" name="password" placeholder="Password (8+ characters)"
                  minlength="8" autocomplete="new-password" required />
-          <button type="button" class="mf-eye-btn" id="mf-eye-btn" aria-label="Show password" aria-pressed="false">
-            <svg id="mf-eye-show" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <button type="button" class="mf-eye-btn" id="mf-eye-btn" data-state="hidden" aria-label="Show password">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>
               <circle cx="12" cy="12" r="3"/>
-            </svg>
-            <svg id="mf-eye-hide" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
-              <path d="M17.94 17.94A10.06 10.06 0 0 1 12 19c-7 0-11-7-11-7a18 18 0 0 1 4-4.94"/>
-              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a17.86 17.86 0 0 1-2.16 3.19"/>
-              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
-              <line x1="1" y1="1" x2="23" y2="23"/>
+              <line class="mf-eye-slash" x1="3" y1="3" x2="21" y2="21"/>
             </svg>
           </button>
         </div>
 
-        <fieldset class="mf-field mf-radio-group">
-          <legend class="mf-sub">You appear as</legend>
-          <label class="mf-radio">
-            <input type="radio" name="gender" value="m" required />
-            <span>male</span>
-          </label>
-          <label class="mf-radio">
-            <input type="radio" name="gender" value="f" required />
-            <span>female</span>
-          </label>
-        </fieldset>
+        <div class="mf-gender-group">
+          <span class="mf-gender-label">You appear as</span>
+          <div class="mf-gender-toggle">
+            <label class="mf-gender-option">
+              <input type="radio" name="gender" value="m" required />
+              <span>Male</span>
+            </label>
+            <label class="mf-gender-option">
+              <input type="radio" name="gender" value="f" required />
+              <span>Female</span>
+            </label>
+          </div>
+        </div>
 
         <p class="mf-err" id="mf-err-1" hidden></p>
         <button class="mf-cta mf-cta-block" type="button" data-action="next-1">Continue</button>
@@ -196,18 +193,14 @@
       }
     });
 
-    // === Password show/hide toggle ===
+    // === Password show/hide toggle (single eye-with-slash icon) ===
     const pwInput = document.getElementById('mf-password');
     const eyeBtn = document.getElementById('mf-eye-btn');
-    const eyeShow = document.getElementById('mf-eye-show');
-    const eyeHide = document.getElementById('mf-eye-hide');
     eyeBtn.addEventListener('click', () => {
-      const showing = pwInput.type === 'text';
-      pwInput.type = showing ? 'password' : 'text';
-      eyeBtn.setAttribute('aria-pressed', String(!showing));
-      eyeBtn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
-      eyeShow.hidden = !showing;   // showing→true: now hidden, so show "show" icon (already swapped)
-      eyeHide.hidden = showing;
+      const isText = pwInput.type === 'text';
+      pwInput.type = isText ? 'password' : 'text';
+      eyeBtn.dataset.state = isText ? 'hidden' : 'visible';
+      eyeBtn.setAttribute('aria-label', isText ? 'Show password' : 'Hide password');
     });
 
     // === Selfie thumbnails after pick ===

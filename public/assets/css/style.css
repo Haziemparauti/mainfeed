@@ -1194,40 +1194,51 @@ img, svg { display: block; max-width: 100%; }
   margin-bottom: 24px;
 }
 
-/* ============ Signup: simplified single-screen form (v5 architecture) ============ */
-.mf-radio-group {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 8px 0;
-  border: none;
+/* ============ Signup: gender toggle (no fieldset/legend, clean grid) ============ */
+.mf-gender-group {
+  margin: 20px 0 4px;
 }
-.mf-radio-group legend {
+.mf-gender-label {
   display: block;
-  width: 100%;
   font-size: 13px;
   color: var(--text-mute);
-  margin-bottom: 4px;
+  margin-bottom: 10px;
+  letter-spacing: 0.02em;
 }
-.mf-radio {
+.mf-gender-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.mf-gender-option {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 18px;
+  justify-content: center;
+  padding: 16px 18px;
   border-radius: 14px;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   background: var(--surface);
   cursor: pointer;
-  flex: 1;
-  justify-content: center;
   font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
-.mf-radio:has(input:checked) {
+.mf-gender-option input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+}
+.mf-gender-option:has(input:checked) {
   border-color: var(--accent);
+  background: rgba(76, 162, 181, 0.10);
   box-shadow: 0 0 0 1px var(--accent), 0 6px 20px rgba(76, 162, 181, 0.18);
 }
-.mf-radio input {
-  accent-color: var(--accent);
+.mf-gender-option:hover {
+  border-color: rgba(76, 162, 181, 0.45);
 }
 .mf-err {
   background: rgba(255, 68, 68, 0.12);
@@ -1296,6 +1307,16 @@ img, svg { display: block; max-width: 100%; }
 }
 .mf-eye-btn:hover { color: var(--text); }
 .mf-eye-btn:active { background: rgba(255,255,255,0.04); }
+
+/* Single eye icon: slash line stays hidden when password is hidden (eye open),
+   slash line shows when password is visible (eye crossed). One SVG always. */
+.mf-eye-btn .mf-eye-slash {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.mf-eye-btn[data-state="visible"] .mf-eye-slash {
+  opacity: 1;
+}
 
 /* ============ Selfie grid: 2 slots side-by-side ============ */
 .mf-selfie-grid--2 {
