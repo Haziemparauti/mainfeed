@@ -56,10 +56,13 @@ RUN pip install --no-cache-dir fastapi 'uvicorn[standard]' httpx boto3 huggingfa
 RUN pip install --no-cache-dir Pillow
 
 # Anton (SIL OFL) — bold condensed, ideal for meme captions. Bundled
-# in-image so the burn-in step has no external font fetch at runtime.
+# in-image. Watermark text uses DejaVu Sans Bold which is preinstalled in
+# the Ubuntu base via fonts-dejavu-core (no download needed).
 RUN mkdir -p /app/assets && \
     wget -q -O /app/assets/Anton.ttf \
-      https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf
+      https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf && \
+    apt-get update -qq && apt-get install -y -qq fonts-dejavu-core && \
+    rm -rf /var/lib/apt/lists/*
 
 # === Server code ===
 COPY swap_server.py /root/swap_server.py

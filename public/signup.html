@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=23" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=23" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=24" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=24" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=23" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=23" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=24" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=24" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -431,8 +431,8 @@
 
       // Swap to "loading video" phase + wait for actual playback readiness.
       if (readyPiece && readyPiece.file_url) {
+        // Stay on "Creating your Mainfeed" title — the bar communicates phase.
         phase = 'loading';
-        setProgressTitle('Loading your video…');
         await preloadVideoForPlayback(`${API}${readyPiece.file_url}`);
       }
 
@@ -452,8 +452,8 @@
       if (!captured.selfie_0 || !captured.selfie_1) return showErr(3, 'Go back to step 2 and add both selfies.');
 
       submitBtn.disabled = true;
-      // Go STRAIGHT to the progress screen — no red error-card stages.
-      openProgressScreen('Uploading your photos…');
+      // Single title from the moment the user submits — no per-stage swap.
+      openProgressScreen('Creating your Mainfeed');
 
       try {
         const fd = new FormData();

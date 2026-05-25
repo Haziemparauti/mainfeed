@@ -26,20 +26,30 @@ from PIL import Image, ImageDraw, ImageFont
 
 # ============ config (tweak to retune layout) ============
 
-FONT_PATH = "/app/assets/Anton.ttf"
+# Anton = display font for the meme CAPTION (bold condensed, classic meme).
+# DejaVu Sans Bold = clean sans-serif for the WATERMARK. Pre-installed on the
+# Ubuntu base image (fonts-dejavu-core), no download / fetch needed. Anton at
+# small watermark size looks cheap; a regular sans like DejaVu reads polished.
+CAPTION_FONT_PATH = "/app/assets/Anton.ttf"
+WATERMARK_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-# Watermark layout
-WATERMARK_Y_PCT = 0.10
-WATERMARK_LOGO_PCT = 0.055  # logo height as fraction of video height
-WATERMARK_TEXT_PCT = 0.035  # watermark text height as fraction of video height
+# Watermark layout (top of frame, small + clean)
+WATERMARK_Y_PCT = 0.08
+WATERMARK_LOGO_PCT = 0.040   # logo height as fraction of video height
+WATERMARK_TEXT_PCT = 0.028   # watermark text height as fraction of video height
 WATERMARK_STROKE = 2
 
-# Caption layout
-CAPTION_Y_PCT = 0.18
-CAPTION_TEXT_PCT = 0.075  # caption text height as fraction of video height
-CAPTION_LINE_SPACING_PCT = 0.012
-CAPTION_STROKE = 4
-CAPTION_HORIZONTAL_PAD_PCT = 0.06   # left/right padding from edges
+# Caption layout (moved down a bit + much smaller so the video shows through)
+CAPTION_Y_PCT = 0.16
+CAPTION_TEXT_PCT = 0.045     # caption text height as fraction of video height
+CAPTION_LINE_SPACING_PCT = 0.010
+CAPTION_STROKE = 3
+CAPTION_HORIZONTAL_PAD_PCT = 0.04   # left/right padding (smaller = wider lines = fewer wraps)
+
+# Logo render quality — we draw it big once and downsample with LANCZOS so it
+# looks sharp at the tiny display size. Re-rendering at the target size
+# directly produces a blocky/pixelated look.
+LOGO_HIRES_SIZE = 512
 
 # Mainfeed brand-kit gradient (dark navy → deep blue → teal → gold)
 BRAND_COLORS = [
@@ -69,19 +79,19 @@ def _interp_brand(t: float) -> Tuple[int, int, int]:
     )
 
 
-@lru_cache(maxsize=8)
-def make_logo(size: int) -> Image.Image:
-    """Mainfeed logo at `size` × `size`: rounded square diagonal gradient + white M."""
+@lru_cache(maxsize=1)
+def _make_logo_hires() -> Image.Image:
+    """Render the logo ONCE at high resolution. We downsample per-watermark."""
+    size = LOGO_HIRES_SIZE
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     px = img.load()
     for y in range(size):
         for x in range(size):
-            # Diagonal gradient: 0 at top-left, 1 at bottom-right
             t = (x + y) / (2 * (size - 1))
             r, g, b = _interp_brand(t)
             px[x, y] = (r, g, b, 255)
 
-    # Apply rounded-corner alpha mask
+    # Rounded-corner alpha mask
     radius = int(size * 0.22)
     mask = Image.new("L", (size, size), 0)
     ImageDraw.Draw(mask).rounded_rectangle(
@@ -89,16 +99,21 @@ def make_logo(size: int) -> Image.Image:
     )
     img.putalpha(mask)
 
-    # White "M" centered
+    # White "M" centered. Use the caption font (Anton) for the iconic letter.
     draw = ImageDraw.Draw(img)
     m_size = int(size * 0.66)
-    font = ImageFont.truetype(FONT_PATH, m_size)
+    font = ImageFont.truetype(CAPTION_FONT_PATH, m_size)
     m_w = draw.textlength("M", font=font)
     m_x = (size - m_w) / 2
-    # Optical centering: nudge up slightly because Anton has bottom whitespace
     m_y = (size - m_size) / 2 - m_size * 0.10
     draw.text((m_x, m_y), "M", font=font, fill=(255, 255, 255, 255))
     return img
+
+
+def make_logo(size: int) -> Image.Image:
+    """Return the logo downsampled to `size`×`size` with LANCZOS — sharp at any scale."""
+    hi = _make_logo_hires()
+    return hi.resize((size, size), Image.LANCZOS)
 
 
 # ============ video probing ============
@@ -147,12 +162,12 @@ def render_overlay_png(video_w: int, video_h: int,
     img = Image.new("RGBA", (video_w, video_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # ===== Watermark row at Y=10% =====
+    # ===== Watermark row at Y=8% =====
     if handle:
         wm_text = f"Mainfeed.app · @{handle}"
         wm_text_size = max(12, int(video_h * WATERMARK_TEXT_PCT))
         wm_logo_size = max(16, int(video_h * WATERMARK_LOGO_PCT))
-        wm_font = ImageFont.truetype(FONT_PATH, wm_text_size)
+        wm_font = ImageFont.truetype(WATERMARK_FONT_PATH, wm_text_size)
         wm_text_w = draw.textlength(wm_text, font=wm_font)
         gap = max(6, wm_logo_size // 4)
         total_w = wm_logo_size + gap + int(wm_text_w)
@@ -173,10 +188,10 @@ def render_overlay_png(video_w: int, video_h: int,
             stroke_fill=(0, 0, 0, 255),
         )
 
-    # ===== Caption at Y=18%, multi-line, uppercase, centered =====
+    # ===== Caption at Y=16%, multi-line, uppercase, centered =====
     if caption:
         cap_size = max(20, int(video_h * CAPTION_TEXT_PCT))
-        cap_font = ImageFont.truetype(FONT_PATH, cap_size)
+        cap_font = ImageFont.truetype(CAPTION_FONT_PATH, cap_size)
         pad = int(video_w * CAPTION_HORIZONTAL_PAD_PCT)
         max_w = video_w - 2 * pad
         lines = _wrap_caption(caption, cap_font, max_w, draw)

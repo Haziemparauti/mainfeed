@@ -2,7 +2,7 @@
 // Network-first for everything same-origin (always fresh on reload).
 // Cache is offline fallback only. Skips /api/* and third-party.
 
-const CACHE = 'mainfeed-v11';  // bump 2026-05-25 → app v11 (HTML overlays REMOVED — caption + watermark are now burned into the video by the pod)
+const CACHE = 'mainfeed-v12';  // bump 2026-05-25 → signup v24 (no "Uploading photos" stage) + pod render_overlay v2 (smaller caption, DejaVu watermark)
 
 self.addEventListener('install', () => {
   self.skipWaiting();
