@@ -296,6 +296,25 @@ async function handleSignup(request, env, origin) {
     });
   }
 
+  // Optional 5-second liveness video (per [[feedback_signup_simple_and_embrace_mismatch]]).
+  // Stored at mainfeed-selfies/<userId>/liveness.<ext>. Setting liveness_verified=1 is
+  // optimistic for MVP — frame-variance check + CSAM-style content scan come later.
+  const livenessVideo = form.get('liveness_video');
+  if (livenessVideo && typeof livenessVideo.arrayBuffer === 'function' && livenessVideo.size > 0) {
+    const MAX_VIDEO_BYTES = 32 * 1024 * 1024;  // 32 MB cap for a 5s phone-camera clip
+    if (livenessVideo.size > MAX_VIDEO_BYTES) return errResp('liveness_video_too_large', 400, origin);
+    const vMime = livenessVideo.type || 'video/mp4';
+    const vExt = vMime.includes('quicktime') || vMime.includes('mov') ? 'mov'
+               : vMime.includes('webm') ? 'webm' : 'mp4';
+    const vKey = `selfies/${userId}/liveness.${vExt}`;
+    await env.SELFIES.put(vKey, livenessVideo.stream(), {
+      httpMetadata: { contentType: vMime },
+    });
+    await env.DB.prepare(
+      'UPDATE users SET liveness_verified = 1, liveness_verified_at = ? WHERE id = ?'
+    ).bind(now(), userId).run();
+  }
+
   const session = await createSession(env, userId);
 
   // Appearance-bucket detection (best-effort — don't fail signup if Llama Vision flakes)

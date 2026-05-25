@@ -1270,3 +1270,129 @@ img, svg { display: block; max-width: 100%; }
 .mf-piece-stage--failed .mf-piece-processing-msg {
   color: #ff8a8a;
 }
+
+/* ============ Password show/hide ============ */
+.mf-field-password {
+  position: relative;
+}
+.mf-field-password input {
+  padding-right: 56px;
+}
+.mf-eye-btn {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mf-eye-btn:hover { color: var(--text); }
+.mf-eye-btn:active { background: rgba(255,255,255,0.04); }
+
+/* ============ Selfie grid: 2 slots side-by-side ============ */
+.mf-selfie-grid--2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.mf-selfie-slot {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border-radius: 14px;
+  border: 2px dashed var(--border);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+}
+.mf-selfie-slot input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.mf-selfie-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-mute);
+  font-size: 14px;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+}
+.mf-selfie-placeholder img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+}
+.mf-selfie-slot--filled {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+/* ============ 5-sec video slot ============ */
+.mf-video-slot {
+  position: relative;
+  display: block;
+  aspect-ratio: 3 / 4;
+  border-radius: 14px;
+  border: 2px dashed var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.mf-video-slot input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.mf-video-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-mute);
+  font-size: 14px;
+  height: 100%;
+  text-align: center;
+  padding: 24px;
+  pointer-events: none;
+}
+.mf-video-placeholder video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+}
+.mf-video-slot--filled {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+/* ============ Progress 4 dots ============ */
+.mf-progress[data-step="1"] span:nth-child(-n+1),
+.mf-progress[data-step="2"] span:nth-child(-n+2),
+.mf-progress[data-step="3"] span:nth-child(-n+3),
+.mf-progress[data-step="4"] span:nth-child(-n+4) {
+  background: var(--accent);
+}
