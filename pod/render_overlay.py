@@ -39,22 +39,27 @@ import cairosvg
 CAPTION_FONT_PATH = "/app/assets/Anton.ttf"
 WATERMARK_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-# Watermark layout — channel-chip "pill" with gradient border (top-center)
-WATERMARK_Y_PCT = 0.12       # vertical center of pill (down from 8% to clear top safe-zone)
-WATERMARK_LOGO_PCT = 0.038   # logo height as fraction of video height
-WATERMARK_TEXT_PCT = 0.028   # watermark text height as fraction of video height
-WATERMARK_PILL_HORIZONTAL_PAD_PX = 14
-WATERMARK_PILL_VERTICAL_PAD_PX = 8
-WATERMARK_PILL_GAP_PX = 8            # gap between logo and text inside the pill
-WATERMARK_PILL_BORDER_PX = 2         # gradient stroke thickness around the pill
-WATERMARK_PILL_BG = (0, 0, 0, 165)   # semi-transparent black
+# Watermark layout — small sharp chip with gradient border (top-center).
+# Supersampling factor: render at 3× target size then LANCZOS-downsample
+# for crisp small text (Pillow renders < 20px text poorly at native).
+WATERMARK_Y_PCT = 0.10
+WATERMARK_LOGO_PCT = 0.022   # logo height as fraction of video height
+WATERMARK_TEXT_PCT = 0.016   # watermark text height as fraction of video height
+WATERMARK_PILL_HORIZONTAL_PAD_PX = 6
+WATERMARK_PILL_VERTICAL_PAD_PX = 3
+WATERMARK_PILL_GAP_PX = 5
+WATERMARK_PILL_BORDER_PX = 1
+WATERMARK_PILL_RADIUS_PX = 6         # fixed corner radius (was: pill_h/2 = stadium)
+WATERMARK_PILL_BG = (0, 0, 0, 175)
+WATERMARK_SUPERSAMPLE = 3            # render at N× then downsample for crispness
 
-# Caption layout (sits just under the pill, multi-line meme font)
-CAPTION_Y_PCT = 0.18
-CAPTION_TEXT_PCT = 0.045     # caption text height as fraction of video height
+# Caption layout — moved to BOTTOM so it doesn't cover the face area
+# (the swap's whole value is the face; covering it kills the personalization).
+CAPTION_Y_PCT = 0.76        # bottom-of-text sits at ~84% (still above TikTok UI)
+CAPTION_TEXT_PCT = 0.035    # smaller (was 0.045) so it doesn't overwhelm
 CAPTION_LINE_SPACING_PCT = 0.010
 CAPTION_STROKE = 3
-CAPTION_HORIZONTAL_PAD_PCT = 0.04   # left/right padding (smaller = wider lines = fewer wraps)
+CAPTION_HORIZONTAL_PAD_PCT = 0.04
 
 # Logo source SVG (the real Mainfeed brand mark) + render quality. We
 # rasterize the SVG once at LOGO_HIRES_SIZE then LANCZOS-downsample for
@@ -127,33 +132,43 @@ def render_watermark_pill(handle: str, video_h: int) -> Image.Image:
     """
     Build a self-contained transparent RGBA pill: gradient-stroked rounded
     rectangle, logo on left, "Mainfeed.app · @handle" text on right, all
-    centered vertically inside. Returns the pill image; caller positions it.
+    centered vertically inside.
+
+    Internal pipeline:
+      - Compute target final dimensions from video height
+      - Render the entire pill at WATERMARK_SUPERSAMPLE × target size
+      - LANCZOS-downsample to target — gives sharp text at small sizes
+        where Pillow's native rendering produces fuzzy glyphs
     """
+    ss = WATERMARK_SUPERSAMPLE
+    target_text_size = max(10, int(video_h * WATERMARK_TEXT_PCT))
+    target_logo_size = max(12, int(video_h * WATERMARK_LOGO_PCT))
+
+    # Scaled-up working sizes for rendering
+    text_size = target_text_size * ss
+    logo_size = target_logo_size * ss
+    pad_x = WATERMARK_PILL_HORIZONTAL_PAD_PX * ss
+    pad_y = WATERMARK_PILL_VERTICAL_PAD_PX * ss
+    gap = WATERMARK_PILL_GAP_PX * ss
+    bp = WATERMARK_PILL_BORDER_PX * ss
+    radius = WATERMARK_PILL_RADIUS_PX * ss
+
     text = f"Mainfeed.app · @{handle}"
-    text_size = max(12, int(video_h * WATERMARK_TEXT_PCT))
-    logo_size = max(16, int(video_h * WATERMARK_LOGO_PCT))
     font = ImageFont.truetype(WATERMARK_FONT_PATH, text_size)
 
-    # Measure text (Pillow gives advance width via textlength; height via the bbox)
     tmp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     text_w = int(tmp_draw.textlength(text, font=font))
-    # Use ascent+descent for a stable text-block height across glyph sets
     asc, desc = font.getmetrics()
     text_h = asc + desc
 
     inner_h = max(logo_size, text_h)
-    pad_x = WATERMARK_PILL_HORIZONTAL_PAD_PX
-    pad_y = WATERMARK_PILL_VERTICAL_PAD_PX
-    inner_w = logo_size + WATERMARK_PILL_GAP_PX + text_w
+    inner_w = logo_size + gap + text_w
     pill_w = inner_w + 2 * pad_x
     pill_h = inner_h + 2 * pad_y
-    radius = pill_h // 2
 
     pill = Image.new("RGBA", (pill_w, pill_h), (0, 0, 0, 0))
 
-    # === Gradient border: mask a brand-gradient strip with a ring (outer
-    # rounded-rect minus inner rounded-rect at -border_px), composite onto pill.
-    bp = WATERMARK_PILL_BORDER_PX
+    # Gradient border = brand gradient masked by an outer-minus-inner ring
     gradient = _make_gradient_strip(pill_w, pill_h)
     ring_mask = Image.new("L", (pill_w, pill_h), 0)
     rd = ImageDraw.Draw(ring_mask)
@@ -164,7 +179,7 @@ def render_watermark_pill(handle: str, video_h: int) -> Image.Image:
     )
     pill.paste(gradient, (0, 0), ring_mask)
 
-    # === Black interior fill (inside the gradient ring)
+    # Black interior fill (inside the gradient ring)
     interior = Image.new("RGBA", (pill_w, pill_h), (0, 0, 0, 0))
     ImageDraw.Draw(interior).rounded_rectangle(
         (bp, bp, pill_w - 1 - bp, pill_h - 1 - bp),
@@ -172,23 +187,23 @@ def render_watermark_pill(handle: str, video_h: int) -> Image.Image:
     )
     pill = Image.alpha_composite(pill, interior)
 
-    # === Logo (left side, vertically centered)
+    # Logo on left (rendered at the supersampled logo_size — make_logo already
+    # downsamples from its 512px cache)
     logo = make_logo(logo_size)
-    logo_x = pad_x
     logo_y = (pill_h - logo_size) // 2
-    pill.paste(logo, (logo_x, logo_y), logo)
+    pill.paste(logo, (pad_x, logo_y), logo)
 
-    # === Text (right of logo, vertically centered using font metrics — no stroke,
-    # the pill bg gives plenty of contrast)
-    text_x = pad_x + logo_size + WATERMARK_PILL_GAP_PX
-    # Y position: top-of-text such that the cap-height visually centers.
-    # PIL's textbaseline=top means y = (pill_h - text_h)/2 puts ascent at top —
-    # but we want optical centering, so offset by descent/2.
+    # Text on right, optically centered
+    text_x = pad_x + logo_size + gap
     text_y = (pill_h - text_h) // 2 - desc // 4
-    draw = ImageDraw.Draw(pill)
-    draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 255))
+    ImageDraw.Draw(pill).text(
+        (text_x, text_y), text, font=font, fill=(255, 255, 255, 255)
+    )
 
-    return pill
+    # Downsample to the final display size
+    final_w = pill_w // ss
+    final_h = pill_h // ss
+    return pill.resize((final_w, final_h), Image.LANCZOS)
 
 
 # ============ video probing ============
@@ -287,7 +302,7 @@ def burn_overlay(input_mp4: Path, overlay_png: Path, output_mp4: Path) -> None:
         "-map", "0:a?",   # audio is optional (DreamID-V output has none)
         "-c:v", "libx264",
         "-preset", "veryfast",
-        "-crf", "20",
+        "-crf", "18",     # was 20 — less compression noise around watermark/caption edges
         "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         "-movflags", "+faststart",
