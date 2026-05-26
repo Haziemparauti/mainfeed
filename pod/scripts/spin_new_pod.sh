@@ -62,7 +62,17 @@ GPU_FALLBACK=(
   "NVIDIA GeForce RTX 4090"
 )
 
-POD_IMAGE="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+# Default to our pre-baked image (built by .github/workflows/build-pod.yml):
+#   - DreamID-V cloned + checkout at pinned SHA
+#   - All pip deps incl. flash_attn + onnxruntime-gpu
+#   - Anton + Inter-Medium fonts in /app/assets
+#   - Brand SVG in /app/assets
+#   - swap_server.py + render_overlay.py + precompute_pose.py in /root
+# Cold pod boot drops from ~6 min → ~1-2 min (just image pull + weights download).
+# Override to fall back to bare pytorch base if the image is unavailable:
+#   MAINFEED_POD_IMAGE=runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04 \
+#     bash pod/scripts/spin_new_pod.sh
+POD_IMAGE="${MAINFEED_POD_IMAGE:-ghcr.io/haziemparauti/mainfeed-swap:latest}"
 
 # ===== helpers =====
 
@@ -143,10 +153,22 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $SSH_KE
 
 # ===== Step 4: apt + pip + clone =====
 
-echo "▶ Bootstrap (apt + pip + DreamID-V clone)..."
+echo "▶ Bootstrap (skip if image is pre-baked, else full install)..."
 ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" \
   DREAMIDV_SHA="$DREAMIDV_SHA" bash -s <<'REMOTE'
 set -e
+
+# Fast-path: if the image is our pre-baked ghcr.io/haziemparauti/mainfeed-swap
+# image (or any image with flash_attn already installed + DreamID-V cloned),
+# skip the ~5-minute bootstrap entirely. Detected by checking the two slowest
+# things to install — if both are there, everything else upstream of them
+# already ran during image build.
+if python -c "import flash_attn" >/dev/null 2>&1 && [ -f /root/dreamidv/generate_dreamidv_faster.py ]; then
+  echo "  ✓ image is pre-provisioned (skipping apt/pip/clone)"
+  exit 0
+fi
+
+echo "  → bare image — running full install (~5 min)"
 
 # apt — ffmpeg for video, libcairo2 for cairosvg, rest are CLI essentials
 apt-get update -qq
