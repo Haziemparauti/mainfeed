@@ -255,6 +255,11 @@ SWAP_POD_SECRET=$POD_SECRET
 WEIGHTS_DIR=/workspace/ckpts
 DREAMIDV_DIR=/root/dreamidv
 DEBUG_KEEP_WORKDIR=1
+# torch.compile mode for the DiT — measured 2026-05-26: "default" gives a
+# steady ~10% speedup over eager with no quality regression. Set to "0" to
+# fall back to eager if this ever breaks. reduce-overhead tested + rejected
+# (CUDA graphs silently skipped on DreamID-V's CPU-tensor scheduler inputs).
+DREAMIDV_TORCH_COMPILE=default
 ENV
 chmod 600 /root/pod_env.sh
 
