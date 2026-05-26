@@ -55,20 +55,21 @@ RUN pip install --no-cache-dir fastapi 'uvicorn[standard]' httpx boto3 huggingfa
 # Pillow renders the overlay PNG; FFmpeg composites it onto every frame.
 # cairosvg rasterizes the real Mainfeed brand SVG at pod startup so the
 # watermark uses the actual brand mark (not a programmatic approximation).
-RUN apt-get update -qq && apt-get install -y -qq libcairo2 fonts-dejavu-core && \
+RUN apt-get update -qq && apt-get install -y -qq libcairo2 && \
     rm -rf /var/lib/apt/lists/* && \
     pip install --no-cache-dir Pillow cairosvg
 
-# Anton (SIL OFL)        — bold condensed, meme captions
-# Simplex Sans (SIL OFL)  — clean geometric display sans, watermark pill text
-RUN mkdir -p /app/assets && \
-    wget -q -O /app/assets/Anton.ttf \
-      https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf && \
-    wget -q -O /app/assets/SimplexSans-Regular.ttf \
-      https://raw.githubusercontent.com/popp3000/SimplexSans/main/fonts/SimplexSans-Regular.ttf
-
-# Bundle the real brand SVG so the pod renders the actual logo, not a fake one.
-COPY assets/logo-square2.svg /app/assets/logo-square2.svg
+# Bundle local-source-of-truth assets:
+#   Anton          (SIL OFL) — bold condensed, meme caption font
+#   Inter Medium   (SIL OFL) — premium SaaS sans, watermark text (locked
+#                              2026-05-26: replaces DejaVu Bold which read
+#                              cheap at small video sizes; size 0.022 + 2.5em
+#                              letter-spacing per pod/render_overlay.py)
+#   logo-square2   (Mainfeed brand mark) — rasterized by cairosvg at startup
+RUN mkdir -p /app/assets
+COPY assets/Anton.ttf         /app/assets/Anton.ttf
+COPY assets/Inter-Medium.ttf  /app/assets/Inter-Medium.ttf
+COPY assets/logo-square2.svg  /app/assets/logo-square2.svg
 
 # === Server code ===
 COPY swap_server.py /root/swap_server.py

@@ -19,25 +19,29 @@ set -e
 : "${POD_IP:?Set POD_IP to your RunPod IP (e.g. 103.196.86.108)}"
 : "${POD_PORT:?Set POD_PORT to your RunPod SSH port (e.g. 10800)}"
 
-echo "→ copying pod files to root@${POD_IP}:${POD_PORT}…"
+echo "→ copying pod source + brand assets to root@${POD_IP}:${POD_PORT}…"
 scp -P "$POD_PORT" \
     pod/swap_server.py \
     pod/render_overlay.py \
     root@"$POD_IP":/root/
 
+ssh -p "$POD_PORT" root@"$POD_IP" 'mkdir -p /app/assets'
+scp -P "$POD_PORT" \
+    pod/assets/Anton.ttf \
+    pod/assets/Inter-Medium.ttf \
+    pod/assets/logo-square2.svg \
+    root@"$POD_IP":/app/assets/
+
 echo "→ installing deps + restarting swap_server.py…"
 ssh -p "$POD_PORT" root@"$POD_IP" bash -s <<'REMOTE'
 set -e
 
-# Pillow for the overlay PNG; idempotent.
-pip install --quiet --no-cache-dir Pillow
+# Pillow + cairosvg for the overlay PNG; idempotent.
+pip install --quiet --no-cache-dir Pillow cairosvg
 
-# Anton.ttf (SIL OFL) for the burn-in font; idempotent.
-if [ ! -f /app/assets/Anton.ttf ]; then
-  mkdir -p /app/assets
-  wget -q -O /app/assets/Anton.ttf \
-    https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf
-  echo "  installed Anton.ttf"
+# libcairo2 for cairosvg's runtime; idempotent.
+if ! dpkg -s libcairo2 >/dev/null 2>&1; then
+  apt-get update -qq && apt-get install -y -qq libcairo2 && rm -rf /var/lib/apt/lists/*
 fi
 
 # Restart the server. The existing process holds the GPU lock so any in-flight

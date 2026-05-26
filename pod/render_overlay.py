@@ -35,15 +35,20 @@ import cairosvg
 # Anton = display font for the meme CAPTION (bold condensed, classic meme).
 # DejaVu Sans Bold = clean bold sans for the WATERMARK. Pre-installed on
 # the Ubuntu base via fonts-dejavu-core. Genuinely bold (no thin glyphs),
-# very legible at small sizes, Bitstream Vera license (commercial OK).
+# Watermark = Inter Medium (premium SaaS sans, SIL OFL). DejaVu Bold read
+# too bulky / "Linux defaults" at small video sizes; Inter Medium has
+# refined letterforms that survive small-size rendering when paired with
+# letter-spacing (`tracking`) — the same trick Stripe / Vercel use in UI.
 CAPTION_FONT_PATH = "/app/assets/Anton.ttf"
-WATERMARK_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+WATERMARK_FONT_PATH = "/app/assets/Inter-Medium.ttf"
 
-# Watermark layout — slightly bigger pill, bold DejaVu Sans text. Sizes
-# bumped ~30% from the previous Simplex Sans pass for better legibility.
-WATERMARK_Y_PCT = 0.06       # was 0.10 — moved up; caption follows, same gap
-WATERMARK_LOGO_PCT = 0.026   # was 0.022 (Simplex), backed off from 0.028
-WATERMARK_TEXT_PCT = 0.018   # was 0.016 (Simplex), DejaVu Bold is naturally wider
+# Watermark layout — Inter Medium with tracking. Size bumped to compensate
+# for the lighter weight (Medium 500 vs DejaVu Bold 700), so glyphs read
+# as confidently large rather than thin-and-small.
+WATERMARK_Y_PCT = 0.06              # vertical CENTER of pill
+WATERMARK_LOGO_PCT = 0.026          # logo height / video height (unchanged)
+WATERMARK_TEXT_PCT = 0.022          # was 0.018 (DejaVu Bold); Inter Medium needs more pixels
+WATERMARK_LETTER_SPACING_EM = 0.025 # 2.5% of font size between chars — air = premium
 WATERMARK_PILL_HORIZONTAL_PAD_PX = 7
 WATERMARK_PILL_VERTICAL_PAD_PX = 4
 WATERMARK_PILL_GAP_PX = 6
@@ -126,6 +131,30 @@ def _make_gradient_strip(width: int, height: int) -> Image.Image:
     return img
 
 
+def _measure_tracked(draw: ImageDraw.ImageDraw, text: str,
+                     font: ImageFont.ImageFont, ls_px: int) -> int:
+    """Width of `text` rendered with `ls_px` pixels between each pair of chars."""
+    if not text:
+        return 0
+    total = 0
+    for ch in text:
+        total += int(draw.textlength(ch, font=font))
+    total += ls_px * (len(text) - 1)
+    return total
+
+
+def _draw_text_tracked(draw: ImageDraw.ImageDraw, xy, text: str,
+                       font: ImageFont.ImageFont, fill, ls_px: int) -> None:
+    """Render `text` one char at a time with extra `ls_px` between chars.
+    Pillow has no letter-spacing param; per-char draw is the only way."""
+    x, y = xy
+    for i, ch in enumerate(text):
+        draw.text((x, y), ch, font=font, fill=fill)
+        x += int(draw.textlength(ch, font=font))
+        if i < len(text) - 1:
+            x += ls_px
+
+
 def render_watermark_pill(handle: str, video_h: int) -> Image.Image:
     """
     Build a self-contained transparent RGBA pill: gradient-stroked rounded
@@ -154,8 +183,13 @@ def render_watermark_pill(handle: str, video_h: int) -> Image.Image:
     text = f"Mainfeed.app · @{handle}"
     font = ImageFont.truetype(WATERMARK_FONT_PATH, text_size)
 
+    # Letter-spacing (tracking) — Pillow doesn't render this natively, so
+    # we compute the tracked width here and render per-char below. Spacing
+    # is in supersampled pixels so it scales with the rest of the layout.
+    ls_px = int(text_size * WATERMARK_LETTER_SPACING_EM)
+
     tmp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    text_w = int(tmp_draw.textlength(text, font=font))
+    text_w = _measure_tracked(tmp_draw, text, font, ls_px)
     asc, desc = font.getmetrics()
     text_h = asc + desc
 
@@ -191,11 +225,13 @@ def render_watermark_pill(handle: str, video_h: int) -> Image.Image:
     logo_y = (pill_h - logo_size) // 2
     pill.paste(logo, (pad_x, logo_y), logo)
 
-    # Text on right, optically centered
+    # Text on right, optically centered, drawn per-char so we can apply
+    # letter-spacing (tracking).
     text_x = pad_x + logo_size + gap
     text_y = (pill_h - text_h) // 2 - desc // 4
-    ImageDraw.Draw(pill).text(
-        (text_x, text_y), text, font=font, fill=(255, 255, 255, 255)
+    _draw_text_tracked(
+        ImageDraw.Draw(pill), (text_x, text_y), text, font,
+        fill=(255, 255, 255, 255), ls_px=ls_px,
     )
 
     # Downsample to the final display size
