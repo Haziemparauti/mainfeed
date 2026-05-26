@@ -102,6 +102,9 @@ $('#mf-menu-logout')?.addEventListener('click', async (e) => {
 
 let _feedPollTimer = null;
 
+// Track how many ready pieces we've shown so we can detect when new ones land.
+let _lastReadyCount = 0;
+
 async function loadFeed() {
   const feed = $('#mf-feed');
   if (!feed) return;
@@ -109,16 +112,16 @@ async function loadFeed() {
   if (res.status === 401) return showError('not_authenticated');
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return showError(data.error);
+  // Backend already filters to status='ready' (2026-05-26 — user explicitly
+  // doesn't want to see processing/failed states surface in the feed).
   const pieces = data.pieces || [];
   renderFeed(pieces);
 
-  // If any pieces are still processing on the pod, poll every 8s until all
-  // are 'ready' or 'failed'. Welcome video swap takes ~3 min on RTX A6000.
-  const hasProcessing = pieces.some((p) => p.status === 'processing');
+  // Quiet background polling so newly-rendered pieces appear without a manual
+  // refresh. 20s cadence balances freshness against API load.
   if (_feedPollTimer) clearTimeout(_feedPollTimer);
-  if (hasProcessing) {
-    _feedPollTimer = setTimeout(loadFeed, 8000);
-  }
+  _feedPollTimer = setTimeout(loadFeed, 20000);
+  _lastReadyCount = pieces.length;
 }
 
 function renderFeed(pieces) {
@@ -135,28 +138,10 @@ function renderFeed(pieces) {
 }
 
 function pieceCard(p) {
-  // Pieces still being generated on the pod show a placeholder card.
-  if (p.status === 'processing') {
-    const caption = String(p.caption || '').trim();
-    return `
-      <article class="mf-piece mf-piece--processing" data-id="${p.id}" data-status="processing">
-        <div class="mf-piece-stage mf-piece-stage--processing">
-          <div class="mf-piece-spinner" aria-hidden="true"></div>
-          <div class="mf-piece-processing-msg">Your Mainfeed is being made…<br><span style="opacity:0.6;font-size:0.85em">about 3 minutes</span></div>
-          ${caption ? `<div class="mf-piece-overlay mf-piece-overlay--top">${escapeHtml(caption)}</div>` : ''}
-        </div>
-      </article>
-    `;
-  }
-  if (p.status === 'failed') {
-    return `
-      <article class="mf-piece mf-piece--failed" data-id="${p.id}" data-status="failed">
-        <div class="mf-piece-stage mf-piece-stage--failed">
-          <div class="mf-piece-processing-msg">This one didn't render. We'll try again on your next diary entry.</div>
-        </div>
-      </article>
-    `;
-  }
+  // Backend now only returns status='ready' pieces — processing + failed
+  // never reach the user. (Kept the conditional guard defensive in case the
+  // backend ever sends one through.)
+  if (p.status && p.status !== 'ready') return '';
   const caption = String(p.caption || '').trim();
   const mediaTag = p.type === 'video'
     ? `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`

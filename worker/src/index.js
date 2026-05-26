@@ -467,10 +467,15 @@ async function handleFeed(request, env, origin) {
   const limit = Math.min(50, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10)));
   const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10));
 
+  // Only surface READY pieces — processing rows are a backend detail; failed
+  // rows are noise (we retry on the user's next diary entry). Per user
+  // 2026-05-26: "ONLY WHEN THE VIDEO IS DONE, IT GETS PUSHED AND THE USER
+  // SEES THE NEW CONTENT". No placeholders, no error messages, no captions
+  // surfaced ahead of the render.
   const rows = await env.DB.prepare(
     `SELECT id, type, caption, mime_type, width, height, duration, created_at, public, status
      FROM generated_pieces
-     WHERE user_id = ? AND deleted_at IS NULL
+     WHERE user_id = ? AND deleted_at IS NULL AND status = 'ready'
      ORDER BY created_at DESC LIMIT ? OFFSET ?`
   ).bind(r.session.user_id, limit, offset).all();
 
