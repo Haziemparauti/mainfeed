@@ -30,6 +30,13 @@ bucket_name = "mainfeed-stock"
 [ai]
 binding = "AI"
 
+# Janitor cron — every 5 min, sweep stuck 'processing' pieces that the pod
+# never callbacked (pod crash, OOM, network blip). Marks them 'failed' so
+# they exit the user's invisible queue + cleans up temp public selfies.
+# Audit 2026-05-26 H1 / Bundle C / task #25.
+[triggers]
+crons = ["*/5 * * * *"]
+
 # Secrets (set via `wrangler secret put NAME`):
 #   FAL_API_KEY          — Fal.ai image/video generation
 #   ADMIN_TOKEN          — admin/takedown endpoints

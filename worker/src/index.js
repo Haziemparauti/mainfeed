@@ -277,23 +277,50 @@ async function handleSignup(request, env, origin) {
 
   // Stash gender + bucket inside the profile JSON too (for legacy callers that read profile)
   const profileJson = JSON.stringify({ onboarding: profile, gender, checkins: [] });
-  await env.DB.prepare(
-    `INSERT INTO users
-       (id, handle, email, password_hash, created_at,
-        liveness_verified, consent_18, consent_ai, consent_terms,
-        selfies_count, plan, daily_pieces_count, daily_pieces_reset_at, profile,
-        primary_selfie_r2_key)
-     VALUES (?, ?, ?, ?, ?, 0, 1, 1, 1, ?, 'free', 0, ?, ?, ?)`
-  ).bind(userId, handle, email, passwordHash, ts, selfies.length, ts, profileJson, primarySelfieKey).run();
 
-  // Upload selfies to R2 (SELFIES bucket)
-  for (let i = 0; i < selfies.length; i++) {
-    const s = selfies[i];
-    const ext = (s.type.split('/')[1] || 'jpg').toLowerCase().replace('jpeg', 'jpg');
-    const key = `selfies/${userId}/${i}.${ext}`;
-    await env.SELFIES.put(key, s.stream(), {
-      httpMetadata: { contentType: s.type },
-    });
+  // ORDER MATTERS (audit 2026-05-26 H4): upload selfies to R2 BEFORE
+  // INSERTing the user row. If R2 fails partway, no user row is created so
+  // there's no ghost user with no selfies. If INSERT then fails on the
+  // UNIQUE constraint race, we clean up the uploaded selfies.
+  const uploadedKeys = [];
+  try {
+    for (let i = 0; i < selfies.length; i++) {
+      const s = selfies[i];
+      const ext = (s.type.split('/')[1] || 'jpg').toLowerCase().replace('jpeg', 'jpg');
+      const key = `selfies/${userId}/${i}.${ext}`;
+      await env.SELFIES.put(key, s.stream(), {
+        httpMetadata: { contentType: s.type },
+      });
+      uploadedKeys.push(key);
+    }
+  } catch (uploadErr) {
+    // Clean up any partial uploads — no orphan files in R2.
+    for (const k of uploadedKeys) { try { await env.SELFIES.delete(k); } catch (_) {} }
+    console.error('signup: selfie upload failed', uploadErr);
+    return errResp('selfie_upload_failed', 502, origin);
+  }
+
+  // Now INSERT the user row. If a concurrent signup grabbed the same handle
+  // or email between the SELECT above and here, the UNIQUE constraint trips
+  // a D1 error — catch, clean up selfies, return a clean 409.
+  try {
+    await env.DB.prepare(
+      `INSERT INTO users
+         (id, handle, email, password_hash, created_at,
+          liveness_verified, consent_18, consent_ai, consent_terms,
+          selfies_count, plan, daily_pieces_count, daily_pieces_reset_at, profile,
+          primary_selfie_r2_key)
+       VALUES (?, ?, ?, ?, ?, 0, 1, 1, 1, ?, 'free', 0, ?, ?, ?)`
+    ).bind(userId, handle, email, passwordHash, ts, selfies.length, ts, profileJson, primarySelfieKey).run();
+  } catch (dbErr) {
+    // UNIQUE race — clean up the R2 selfies we just uploaded.
+    for (const k of uploadedKeys) { try { await env.SELFIES.delete(k); } catch (_) {} }
+    const msg = String(dbErr).toLowerCase();
+    if (msg.includes('unique') || msg.includes('constraint')) {
+      return errResp('handle_or_email_taken', 409, origin);
+    }
+    console.error('signup: user INSERT failed', dbErr);
+    return errResp('signup_failed', 500, origin);
   }
 
   // Optional 5-second liveness video (per [[feedback_signup_simple_and_embrace_mismatch]]).
@@ -317,17 +344,33 @@ async function handleSignup(request, env, origin) {
 
   const session = await createSession(env, userId);
 
-  // Appearance-bucket detection (best-effort — don't fail signup if Llama Vision flakes)
+  // Appearance-bucket detection (Llama Vision). Best-effort — don't fail
+  // signup if Llama flakes. Retry once, then fall back to a sensible
+  // gender-keyed default so the welcome swap can still pick a bucket-
+  // matched stock clip instead of a random gender-only clip.
+  // Audit 2026-05-26 (3rd "known unfixed").
   let appearanceBucket = null;
-  try {
-    const det = await detectAppearanceFromR2(env, primarySelfieKey, 'SELFIES', gender);
-    if (det && det.bucket) {
-      appearanceBucket = det.bucket;
-      await env.DB.prepare('UPDATE users SET appearance_bucket = ? WHERE id = ?')
-        .bind(appearanceBucket, userId).run();
+  for (let attempt = 0; attempt < 2 && !appearanceBucket; attempt++) {
+    try {
+      const det = await detectAppearanceFromR2(env, primarySelfieKey, 'SELFIES', gender);
+      if (det && det.bucket) appearanceBucket = det.bucket;
+    } catch (err) {
+      console.error(`appearance-detect attempt ${attempt + 1} failed`, err);
     }
+  }
+  if (!appearanceBucket) {
+    // Sensible mid-population default per gender — better than null which
+    // would force fall-through to random gender-only clip selection.
+    appearanceBucket = gender === 'f'
+      ? 'f_long_brown_wavy_fair'
+      : 'm_short_dark_straight_brown';
+    console.warn('appearance-detect: using gender default', { userId, gender, fallback: appearanceBucket });
+  }
+  try {
+    await env.DB.prepare('UPDATE users SET appearance_bucket = ? WHERE id = ?')
+      .bind(appearanceBucket, userId).run();
   } catch (err) {
-    console.error('appearance-detect-failed', err);
+    console.error('appearance-bucket update failed', err);
   }
 
   // Queue the welcome VIDEO swap (DreamID-V on the RunPod pod). Don't block the
@@ -1288,7 +1331,46 @@ async function handleDiaryCreate(request, env, origin) {
 
 // ============ Router ============
 
+// Scheduled (cron) handler — runs every 5 min via the [triggers] block in
+// wrangler.toml. Audit 2026-05-26 H1: pieces stuck in 'processing' state
+// because the pod never callbacked (crash, OOM, network blip) were
+// previously invisible to the user (feed filters to 'ready') AND occupied
+// orphan public selfie files. This sweeps them.
+async function runJanitor(env) {
+  const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 min
+  const cutoff = Date.now() - STUCK_THRESHOLD_MS;
+  const stuck = await env.DB.prepare(
+    `SELECT id, user_id FROM generated_pieces
+     WHERE status = 'processing' AND created_at < ?
+     LIMIT 200`
+  ).bind(cutoff).all();
+
+  const rows = stuck.results || [];
+  if (rows.length === 0) {
+    console.log('[janitor] nothing stuck');
+    return { swept: 0 };
+  }
+
+  for (const row of rows) {
+    try {
+      await env.DB.prepare(
+        "UPDATE generated_pieces SET status = 'failed' WHERE id = ? AND status = 'processing'"
+      ).bind(row.id).run();
+      // Clean up the per-piece temp selfie if it's still there.
+      try { await env.STOCK.delete(`stock/_welcome_src_${row.id}.jpg`); } catch (_) {}
+    } catch (err) {
+      console.error('[janitor] failed to sweep', row.id, err);
+    }
+  }
+  console.log('[janitor] swept', rows.length, 'stuck pieces');
+  return { swept: rows.length };
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runJanitor(env));
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin') || '';
