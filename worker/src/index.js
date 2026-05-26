@@ -502,7 +502,91 @@ async function handleVerifyIdentity(request, env, origin) {
 
 // ============ Feed / Pieces ============
 
-async function handleFeed(request, env, origin) {
+// POST to the pod's /swap endpoint with retry-on-5xx/404/network-error.
+// Retries with exponential backoff (1s, 4s) to absorb transient
+// Cloudflare-edge / RunPod-proxy flakes. Audit 2026-05-26 evening — we saw
+// a 404 from the proxy on a healthy pod once. Returns the final Response
+// object (or throws if every attempt errored).
+async function fetchPodWithRetry(url, init, {
+  maxAttempts = 3,
+  retryStatuses = [404, 500, 502, 503, 504],
+  backoffMs = [1000, 4000],
+} = {}) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      // 2xx + 3xx → success. 4xx (other than 404) → real client error, don't retry.
+      // 5xx + 404 → transient infra flake, retry.
+      if (!retryStatuses.includes(res.status)) return res;
+      // Drain body so the connection can be reused.
+      try { await res.text(); } catch (_) {}
+      if (attempt >= maxAttempts) return res;  // out of attempts; return the last bad response
+      const wait = backoffMs[attempt - 1] || backoffMs[backoffMs.length - 1];
+      console.warn(`[fetchPodWithRetry] ${url} attempt ${attempt} → ${res.status}, retrying in ${wait}ms`);
+      await new Promise((r) => setTimeout(r, wait));
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts) throw err;
+      const wait = backoffMs[attempt - 1] || backoffMs[backoffMs.length - 1];
+      console.warn(`[fetchPodWithRetry] ${url} attempt ${attempt} threw ${String(err).slice(0, 80)}, retrying in ${wait}ms`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw lastErr || new Error('fetchPodWithRetry exhausted attempts');
+}
+
+
+// Auto-retry the welcome video swap when the user opens the app and has
+// no pieces to show yet. Catches the case where signup-time pod call hit
+// some failure mode the retry logic couldn't absorb, leaving the user with
+// no welcome content. Idempotent: only fires if 0 ready + 0 processing
+// pieces AND user is < 24h old (so we don't keep re-queueing forever).
+//
+// Called via ctx.waitUntil from handleFeed — doesn't block the feed response.
+async function maybeRetryWelcomeOnFeedOpen(env, userId) {
+  const userRow = await env.DB.prepare(
+    `SELECT id, handle, profile, primary_selfie_r2_key, appearance_bucket, created_at
+       FROM users WHERE id = ? AND deleted_at IS NULL`
+  ).bind(userId).first();
+  if (!userRow) return;
+
+  // Only auto-retry within the first 24h after signup.
+  const HOUR = 3600 * 1000;
+  const ageMs = Date.now() - (userRow.created_at || 0);
+  if (ageMs > 24 * HOUR) return;
+
+  // Skip if the user already has a ready piece OR a processing one in flight.
+  const counts = await env.DB.prepare(
+    `SELECT
+       SUM(CASE WHEN status='ready' THEN 1 ELSE 0 END) AS ready_count,
+       SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) AS processing_count,
+       SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed_count
+     FROM generated_pieces
+     WHERE user_id = ? AND deleted_at IS NULL`
+  ).bind(userId).first();
+  const ready = Number(counts?.ready_count || 0);
+  const processing = Number(counts?.processing_count || 0);
+  if (ready > 0 || processing > 0) return;
+
+  // Pull gender from profile JSON (signup writes { onboarding, gender, checkins } there).
+  let gender = 'm';
+  try {
+    const p = JSON.parse(userRow.profile || '{}');
+    if (p.gender === 'f' || p.gender === 'm') gender = p.gender;
+  } catch (_) {}
+
+  console.log('[welcome-retry-on-feed-open] firing for', userId, {
+    ready, processing, failed: counts?.failed_count || 0, ageMin: Math.floor(ageMs / 60000),
+  });
+  await generateWelcomeVideoSwap(
+    env, userRow.id, userRow.handle, gender,
+    userRow.primary_selfie_r2_key, userRow.appearance_bucket, Date.now(),
+  );
+}
+
+
+async function handleFeed(request, env, ctx, origin) {
   const r = await requireSession(request, env, origin);
   if (r.error) return r.error;
 
@@ -535,6 +619,19 @@ async function handleFeed(request, env, origin) {
     public: !!p.public,
     status: p.status || 'ready',
   }));
+
+  // Self-healing: if the user has zero pieces to show (welcome flow failed
+  // at signup-time due to pod flake or similar), re-queue a welcome swap in
+  // the background. ctx.waitUntil keeps the worker alive past the response
+  // so the fire-and-forget completes. Idempotent: skips if any ready or
+  // processing piece exists, or if user is > 24h old. Audit 2026-05-26.
+  if (pieces.length === 0 && ctx?.waitUntil) {
+    ctx.waitUntil(
+      maybeRetryWelcomeOnFeedOpen(env, r.session.user_id).catch((e) =>
+        console.error('[welcome-retry-on-feed-open] err', e)
+      )
+    );
+  }
 
   return json({ ok: true, pieces, total: pieces.length }, {}, origin);
 }
@@ -1122,7 +1219,7 @@ async function generateWelcomeVideoSwap(env, userId, handle, gender, primarySelf
 
   const podSwapUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';
   try {
-    const res = await fetch(podSwapUrl, {
+    const res = await fetchPodWithRetry(podSwapUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1394,7 +1491,7 @@ export default {
     if (method === 'POST' && path === '/api/verify-identity') return handleVerifyIdentity(request, env, origin);
 
     // Feed
-    if (method === 'GET' && path === '/api/feed') return handleFeed(request, env, origin);
+    if (method === 'GET' && path === '/api/feed') return handleFeed(request, env, ctx, origin);
 
     // Piece (file stream, delete, publish toggle)
     const pieceFileMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)\/file$/);
@@ -2007,7 +2104,7 @@ async function handleAdminSwapQueue(request, env, origin) {
   const podUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';
   let res;
   try {
-    res = await fetch(podUrl, {
+    res = await fetchPodWithRetry(podUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
