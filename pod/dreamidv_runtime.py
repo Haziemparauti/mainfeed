@@ -135,6 +135,43 @@ def init(weights_dir: str, dreamidv_dir: str, task: str = "swapface",
     logging.info("[dreamidv_runtime] pipeline loaded; ready for swaps")
 
 
+# DreamID-V faster's last temporal chunk loses future-frame conditioning, so
+# the last ~4-10 frames show subtle identity drift (lip/jaw micro-jitter, in
+# motion). Mitigation: ask the model for `frame_num + TAIL_TRIM_FRAMES`,
+# ffmpeg-trim the last `TAIL_TRIM_FRAMES` after generation. User sees a clean
+# clip whose final frame still has stable identity. Verified 2026-05-26 on
+# test1's welcome swap. Wall time impact: +~17%.
+TAIL_TRIM_FRAMES = 20
+
+
+def _trim_tail(mp4_path: str, n_drop: int) -> None:
+    """Drop the last `n_drop` frames from the video in place. No-op if the
+    trim would leave <24 frames (1s) — safety guard."""
+    import subprocess
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+         "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", mp4_path],
+        capture_output=True, text=True, check=True,
+    )
+    total = int((probe.stdout or "0").strip() or "0")
+    keep = total - n_drop
+    if keep < 24:
+        logging.warning(f"[dreamidv_runtime] _trim_tail: total={total} keep={keep} (<24), skipping trim")
+        return
+    tmp_path = mp4_path + ".trim.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error",
+         "-i", mp4_path,
+         "-frames:v", str(keep),
+         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+         "-pix_fmt", "yuv420p", "-an",
+         tmp_path],
+        check=True, capture_output=True,
+    )
+    os.replace(tmp_path, mp4_path)
+    logging.info(f"[dreamidv_runtime] tail-trimmed {n_drop} frames; {total} → {keep}")
+
+
 def run_swap(src_image: str, ref_video: str, out_mp4: str,
              size: str = "832*480", sample_steps: int = 16,
              sample_guide_scale_img: float = 4.0, frame_num: int = 120,
@@ -146,21 +183,31 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
     Run one swap. Mirrors the behavior of generate_dreamidv_faster.py CLI
     exactly so output matches at the same seed.
 
+    `frame_num` is the USER-FACING target. Internally we ask DreamID-V for
+    `frame_num + TAIL_TRIM_FRAMES` and trim the glitchy tail (temporal-chunk
+    artifact at the last frames of every swap).
+
     Steps:
       1. Run DWPose on ref_video to produce *_pose.mp4 + *_mask.mp4
          (skipped if cached files already exist next to ref_video).
-      2. Call pipeline.generate(...) with warm model.
-      3. cache_video(...) to write the output mp4.
+      2. Call pipeline.generate(...) with frame_num + tail buffer.
+      3. cache_video(...) to write the raw output mp4.
+      4. ffmpeg-trim the last TAIL_TRIM_FRAMES from the output.
 
     Args mirror the CLI args of generate_dreamidv_faster.py.
 
     Returns:
-        Path to the output mp4 on disk.
+        Path to the output mp4 on disk (already tail-trimmed).
     """
     if not _INITIALIZED:
         raise RuntimeError("dreamidv_runtime.init() must be called before run_swap()")
 
     cfg = _WAN_CONFIGS[task]
+
+    # Ask DreamID-V for the user-facing target PLUS a tail buffer that we'll
+    # trim post-generation. The model's last temporal chunk has weaker identity
+    # conditioning, producing visible micro-jitter in the final ~5-10 frames.
+    requested_frame_num = frame_num + TAIL_TRIM_FRAMES
 
     # === DWPose preprocessing (matches generate_dreamidv_faster.py lines 270-289) ===
     ref_dir = os.path.dirname(ref_video) or "."
@@ -188,7 +235,7 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
         prompt,
         ref_paths,
         size=_SIZE_CONFIGS[size],
-        frame_num=frame_num,
+        frame_num=requested_frame_num,
         shift=sample_shift,
         sample_solver=sample_solver,
         sampling_steps=sample_steps,
@@ -209,4 +256,12 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
         normalize=True,
         value_range=(-1, 1),
     )
+
+    # Tail-trim the glitchy last frames (see TAIL_TRIM_FRAMES comment above).
+    if TAIL_TRIM_FRAMES > 0:
+        try:
+            _trim_tail(out_mp4, TAIL_TRIM_FRAMES)
+        except Exception as e:
+            logging.error(f"[dreamidv_runtime] tail-trim failed (keeping untrimmed): {e}")
+
     return out_mp4
