@@ -172,13 +172,13 @@ def init(weights_dir: str, dreamidv_dir: str, task: str = "swapface",
     logging.info("[dreamidv_runtime] pipeline loaded; ready for swaps")
 
 
-# DreamID-V faster's last temporal chunk loses future-frame conditioning, so
-# the last ~4-10 frames show subtle identity drift (lip/jaw micro-jitter, in
-# motion). Mitigation: ask the model for `frame_num + TAIL_TRIM_FRAMES`,
-# ffmpeg-trim the last `TAIL_TRIM_FRAMES` after generation. User sees a clean
-# clip whose final frame still has stable identity. Verified 2026-05-26 on
-# test1's welcome swap. Wall time impact: +~17%.
-TAIL_TRIM_FRAMES = 20
+# Tail-trim DISABLED 2026-05-26 LATE EVENING with quota simplification.
+# Locked product spec: 3-second videos at DreamID-V's default frame_num=81.
+# At that length the end-of-clip identity drift is small in absolute time
+# (~0.2s of micro-jitter at clip end) and not worth +17% cost to fix —
+# videos are no longer the focal "share format" (memes + images are).
+# To re-enable for special longer clips, set TAIL_TRIM_FRAMES > 0.
+TAIL_TRIM_FRAMES = 0
 
 
 def _trim_tail(mp4_path: str, n_drop: int) -> None:
@@ -211,7 +211,7 @@ def _trim_tail(mp4_path: str, n_drop: int) -> None:
 
 def run_swap(src_image: str, ref_video: str, out_mp4: str,
              size: str = "832*480", sample_steps: int = 16,
-             sample_guide_scale_img: float = 4.0, frame_num: int = 120,
+             sample_guide_scale_img: float = 4.0, frame_num: int = 81,
              sample_fps: int = 24,
              sample_shift: float = 5.0, sample_solver: str = "unipc",
              seed: int = 42, offload_model: bool = True,
