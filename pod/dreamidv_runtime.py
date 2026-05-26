@@ -131,6 +131,43 @@ def init(weights_dir: str, dreamidv_dir: str, task: str = "swapface",
         use_usp=False,
         t5_cpu=False,
     )
+
+    # OPTIONAL: torch.compile the DiT for diffusion-time speedup.
+    # Gated behind DREAMIDV_TORCH_COMPILE=1 so we can A/B without code changes.
+    # First swap after compile-on pays ~30-60s compile cost; subsequent swaps
+    # use cached graph and run 1.2-2× faster (target: ~150-180s instead of 218s).
+    # `fullgraph=False` allows graph breaks for flash_attn / custom kernels.
+    # 2026-05-26 evening experiment.
+    import torch as _torch
+    # DREAMIDV_TORCH_COMPILE env var values:
+    #   "0" (default) → eager mode, no compile (safest fallback)
+    #   "1" / "default" → torch.compile(mode="default") — measured ~10% speedup
+    #   "reduce-overhead" → CUDA graphs, expected +15-25% on top of default
+    #   "max-autotune" → most aggressive search, longest compile time
+    # Rollback strategy: set to "0" and restart server.
+    _compile_flag = os.environ.get("DREAMIDV_TORCH_COMPILE", "0").lower()
+    _compile_mode = None
+    if _compile_flag in ("1", "default"):
+        _compile_mode = "default"
+    elif _compile_flag in ("reduce-overhead", "reduce_overhead"):
+        _compile_mode = "reduce-overhead"
+    elif _compile_flag in ("max-autotune", "max_autotune"):
+        _compile_mode = "max-autotune"
+
+    print(f"[dreamidv_runtime] DREAMIDV_TORCH_COMPILE={_compile_flag} → mode={_compile_mode}", flush=True)
+    if _compile_mode is not None:
+        try:
+            print(f"[dreamidv_runtime] applying torch.compile(mode={_compile_mode}, fullgraph=False)...", flush=True)
+            _PIPELINE.model = _torch.compile(
+                _PIPELINE.model,
+                mode=_compile_mode,
+                fullgraph=False,
+                dynamic=False,
+            )
+            print(f"[dreamidv_runtime] torch.compile WRAPPER APPLIED ({_compile_mode}) — first swap pays compile cost", flush=True)
+        except Exception as e:
+            print(f"[dreamidv_runtime] torch.compile FAILED ({_compile_mode}), eager fallback: {e}", flush=True)
+
     _INITIALIZED = True
     logging.info("[dreamidv_runtime] pipeline loaded; ready for swaps")
 
