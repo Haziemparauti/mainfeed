@@ -84,10 +84,29 @@ COPY precompute_pose.py  /root/precompute_pose.py
 RUN mkdir -p /workspace/ckpts/dreamidv /workspace/ckpts/wan2.1 /workspace/ckpts/dwpose /workspace/tmp
 
 # === Runtime ===
+# Path defaults — match where the bootstrap puts things.
 ENV WEIGHTS_DIR=/workspace/ckpts \
     DREAMIDV_DIR=/root/dreamidv \
     OUTPUT_DIR=/workspace/tmp \
     PORT=8000
+
+# Production-default optimizations validated 2026-05-26:
+#   DREAMIDV_TORCH_COMPILE=default → +10% diffusion speedup vs eager,
+#     visually identical output, locked in production.
+#   HARDEN_WEIGHTS_R2=1 → ensure_weights() pulls from R2 mirror (~30s, fast)
+#     instead of HuggingFace (~6 min, slow), per pod/README.md.
+# These can be overridden at container/pod-spin time if a future test needs
+# eager mode or HuggingFace fallback. spin_new_pod.sh re-writes them into
+# pod_env.sh redundantly (same value, harmless).
+ENV DREAMIDV_TORCH_COMPILE=default \
+    HARDEN_WEIGHTS_R2=1 \
+    R2_ACCOUNT_ID=1107173d768105bad60ebb40ff28ef3d \
+    R2_BUCKET=mainfeed-content \
+    R2_OUTPUT_PREFIX=generated/ \
+    R2_WEIGHTS_PREFIX=models/
+
+# Secret env vars (must be supplied at pod-spin time, NOT baked into image):
+#   SWAP_POD_SECRET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s \
