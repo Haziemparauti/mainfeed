@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=24" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=24" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=25" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=25" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=24" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=24" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=25" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=25" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -389,10 +389,12 @@
       const pctEl = document.getElementById('mf-progress-pct');
       setProgressTitle('Creating your Mainfeed');
 
-      // Estimated total time: ~3 min generation + ~15s video buffering.
-      // Bar fills smoothly toward 95% over this window. Phase swaps to
-      // "loading" when the piece flips to status='ready' on the API.
-      const TARGET_SECONDS = 195;
+      // Estimated total time: ~290s warm-pipeline swap + ~10s signup processing
+      // + ~10s video buffering. Bar fills smoothly toward 92% over this window.
+      // Phase swaps to "loading" when the piece flips to status='ready' on the API.
+      // Previously 195s — bumped 2026-05-26 to match actual warm-pipeline timing
+      // (the bar used to sit frozen at 92% for ~100s before reality caught up).
+      const TARGET_SECONDS = 310;
       const startTime = Date.now();
       let pct = 0;
       let ready = false;
