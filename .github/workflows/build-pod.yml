@@ -1,0 +1,82 @@
+name: Build pod image
+
+# Builds the Mainfeed swap-pod Docker image and publishes it to GHCR
+# so future RunPod boots pull a pre-baked image (~30s) instead of
+# running the apt+pip+clone dance on every fresh pod (~6 min).
+#
+# Triggers:
+#   - any push to main that touches pod/** (code, Dockerfile, assets, scripts)
+#   - manual run via the Actions tab
+#
+# Image: ghcr.io/haziemparauti/mainfeed-swap
+# Tags:
+#   - `latest` (always points at main)
+#   - `sha-<7-char>` (immutable pin per commit — use this in production)
+#
+# Uses GH Actions' built-in GITHUB_TOKEN scoped to packages:write, so
+# no Personal Access Token setup is needed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pod/**'
+      - '.github/workflows/build-pod.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: haziemparauti/mainfeed-swap
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # buildx gives us the Linux build subsystem with cache support; the
+      # default `docker build` on ubuntu-latest doesn't expose GHA cache.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      # First build is ~20-25 min cold (downloads runpod/pytorch base ~5 GB,
+      # installs all DreamID-V deps, compiles flash_attn from source).
+      # Subsequent builds with cache: ~5-10 min (only relayered if pod/
+      # files actually changed in the diff).
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./pod
+          file: ./pod/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image digest
+        run: |
+          echo "Pushed:"
+          echo "${{ steps.meta.outputs.tags }}" | sed 's/^/  /'
