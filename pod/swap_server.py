@@ -280,46 +280,55 @@ async def callback(callback_url: str, payload: dict) -> None:
         print(f"[swap_server] callback failed: {e}", flush=True)
 
 
-# ============ inference ============
+# ============ inference (in-process, warm DreamID-V) ============
+
+# dreamidv_runtime keeps the DreamIDV pipeline loaded once at startup;
+# every /swap call reuses the warm model. Refactor 2026-05-26 from the
+# old subprocess-per-swap design — saves ~10-15s of Python+weight-load
+# overhead per swap AND unblocks future torch.compile / TRT optimizations
+# whose compiled artifacts only pay off when the model state persists.
+import dreamidv_runtime
+
 
 async def run_dreamidv(workdir: Path, src_image: Path, ref_video: Path,
                        sample_steps: int, sample_guide_scale_img: float,
                        size: str, base_seed: int, frame_num: Optional[int]) -> Path:
-    """Invoke generate_dreamidv_faster.py with the validated argset."""
-    output = workdir / "output.mp4"
-    cmd = [
-        sys.executable,
-        str(DREAMIDV_DIR / "generate_dreamidv_faster.py"),
-        "--task", "swapface",
-        "--size", size,
-        "--ckpt_dir", str(WAN21_DIR),
-        "--dreamidv_ckpt", str(DREAMIDV_FASTER_CKPT),
-        "--ref_image", str(src_image),
-        "--ref_video", str(ref_video),
-        "--save_file", str(output),
-        "--sample_steps", str(sample_steps),
-        "--sample_guide_scale_img", str(sample_guide_scale_img),
-        "--base_seed", str(base_seed),
-    ]
-    if frame_num is not None:
-        cmd.extend(["--frame_num", str(frame_num)])
+    """Run one swap against the warm DreamID-V pipeline (in-process)."""
+    if not dreamidv_runtime.is_ready():
+        raise RuntimeError("dreamidv_runtime not initialized; call init() at startup")
 
-    print(f"[swap_server] running: {' '.join(cmd)}", flush=True)
-    started = time.time()
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=str(DREAMIDV_DIR),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+    output = workdir / "output.mp4"
+
+    # frame_num=None → fall back to DreamID-V's default of 81. The worker
+    # now always sends 120 (5s @ 24fps) but we keep the optional path.
+    kwargs = dict(
+        src_image=str(src_image),
+        ref_video=str(ref_video),
+        out_mp4=str(output),
+        size=size,
+        sample_steps=sample_steps,
+        sample_guide_scale_img=sample_guide_scale_img,
+        sample_shift=5.0,
+        sample_solver="unipc",
+        seed=base_seed,
+        offload_model=True,
+        task="swapface",
     )
-    stdout, _ = await proc.communicate()
-    log = stdout.decode("utf-8", errors="ignore") if stdout else ""
+    if frame_num is not None:
+        kwargs["frame_num"] = frame_num
+
+    print(f"[swap_server] running dreamidv (warm) "
+          f"size={size} steps={sample_steps} frame_num={frame_num} seed={base_seed}", flush=True)
+    started = time.time()
+    # CPU-bound + blocking — run in a thread so we don't stall the event loop.
+    await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: dreamidv_runtime.run_swap(**kwargs),
+    )
     elapsed = round(time.time() - started, 2)
-    if proc.returncode != 0:
-        STATE.last_error = log[-2000:]
-        raise RuntimeError(f"DreamID-V exited rc={proc.returncode} ({elapsed}s):\n{log[-2000:]}")
+
     if not output.exists():
-        raise RuntimeError(f"DreamID-V exited 0 ({elapsed}s) but no output at {output}:\n{log[-2000:]}")
+        raise RuntimeError(f"DreamID-V finished {elapsed}s but no output at {output}")
     print(f"[swap_server] DreamID-V finished in {elapsed}s, output {output.stat().st_size} bytes", flush=True)
     return output
 
@@ -419,18 +428,30 @@ async def on_startup() -> None:
     print("[swap_server] starting up...", flush=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ensure_weights()
-    # Light sanity-check on the inference script — actual model load happens
-    # in the subprocess on the first /swap call (warm cache afterwards).
-    script = DREAMIDV_DIR / "generate_dreamidv_faster.py"
-    if not script.exists():
-        raise RuntimeError(f"DreamID-V script missing at {script}")
-    # Build R2 client + smoke-test perms on the configured bucket
+
+    # Build R2 client + smoke-test perms on the configured bucket BEFORE
+    # the slow model load so config errors surface fast.
     STATE.r2 = build_r2_client()
     if STATE.r2:
         STATE.r2.head_bucket(Bucket=R2_BUCKET)
         print(f"[swap_server] R2 OK — bucket={R2_BUCKET} prefix={R2_OUTPUT_PREFIX}", flush=True)
     else:
         print("[swap_server] R2 disabled (no creds set)", flush=True)
+
+    # Load DreamID-V once into GPU memory. Replaces the previous
+    # subprocess-per-swap behavior — saves ~10-15s of cold-start per request
+    # and lets future torch.compile/TRT optimizations cache across swaps.
+    print("[swap_server] loading DreamID-V pipeline (one-time)...", flush=True)
+    load_started = time.time()
+    await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: dreamidv_runtime.init(
+            weights_dir=str(WEIGHTS_DIR),
+            dreamidv_dir=str(DREAMIDV_DIR),
+        ),
+    )
+    print(f"[swap_server] DreamID-V loaded in {round(time.time() - load_started, 1)}s", flush=True)
+
     STATE.model_loaded = True
     print(f"[swap_server] ready on port {PORT}", flush=True)
 
