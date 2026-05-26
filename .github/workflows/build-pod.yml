@@ -37,6 +37,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # The default ubuntu-latest runner has ~14 GB free disk. Our image
+      # (pytorch base ~5 GB + apt deps + pip packages incl. flash_attn
+      # compile temp files) peaks above that — first build run died with
+      # "No space left on device". Freeing the unused pre-installed runner
+      # software (Android SDK, .NET, GHC, Haskell, large strings) yields
+      # ~30 GB headroom. ~2 min step, runs once per job.
+      - name: Free disk space (drop unused runner software)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false   # skip; this step is the slow one (~10 min)
+          docker-images: false    # keep — we use docker
+          swap-storage: false
+
       - name: Checkout
         uses: actions/checkout@v4
 
