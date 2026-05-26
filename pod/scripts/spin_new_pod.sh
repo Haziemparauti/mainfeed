@@ -212,6 +212,7 @@ echo "▶ Uploading pod source + assets..."
 ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" 'mkdir -p /app/assets /workspace/ckpts /workspace/tmp'
 scp $SSH_OPTS -P "$POD_PORT" \
   "$REPO_ROOT/pod/swap_server.py" \
+  "$REPO_ROOT/pod/dreamidv_runtime.py" \
   "$REPO_ROOT/pod/render_overlay.py" \
   "$REPO_ROOT/pod/precompute_pose.py" \
   root@"$POD_IP":/root/
@@ -224,9 +225,17 @@ scp $SSH_OPTS -P "$POD_PORT" \
 # ===== Step 6: write env + start swap_server =====
 
 echo "▶ Writing env file + starting swap_server.py..."
-# R2 creds: keep this in sync with mainfeed-stock/r2_creds.txt manually
-R2_ACCESS_KEY_ID=$(grep -oP '(?<=ACCESS_KEY_ID=).*' "$STOCK_DIR/r2_creds.txt" | tr -d '\r\n')
-R2_SECRET_ACCESS_KEY=$(grep -oP '(?<=SECRET_ACCESS_KEY=).*' "$STOCK_DIR/r2_creds.txt" | tr -d '\r\n')
+# R2 creds: keep this in sync with mainfeed-stock/r2_creds.txt manually.
+# Avoid `grep -oP` because Git-Bash on Windows ships with a non-UTF-8
+# locale and PCRE syntax errors out ("supports only unibyte and UTF-8 locales").
+R2_ACCESS_KEY_ID=$(python -c "
+for line in open(r'$STOCK_DIR/r2_creds.txt'):
+    if line.startswith('ACCESS_KEY_ID='):
+        print(line.split('=',1)[1].strip()); break")
+R2_SECRET_ACCESS_KEY=$(python -c "
+for line in open(r'$STOCK_DIR/r2_creds.txt'):
+    if line.startswith('SECRET_ACCESS_KEY='):
+        print(line.split('=',1)[1].strip()); break")
 
 ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" \
   POD_SECRET="$POD_SECRET" \
