@@ -1024,27 +1024,27 @@ async function generateWelcomeVideoSwap(env, userId, handle, gender, primarySelf
   const stockBaseName = String(stock.filename || '').replace(/[^A-Za-z0-9_.-]/g, '_');
   const targetVideoUrl = `https://api.mainfeed.app/public/stock/${stockBaseName}.mp4`;
 
-  // The pod needs a public URL it can fetch the user's selfie from. We only have
-  // a public route for the STOCK bucket today (/public/stock/<filename> rejects
-  // '/' in the filename for safety). Workaround: copy the primary selfie to a
-  // flat filename inside mainfeed-stock so the pod can grab it via the existing
-  // route. Cleanup of this temp copy is a follow-up (acceptable to leak for now
-  // because keys are user-id-scoped and selfie data is not sensitive beyond what
-  // already goes to the pod for swap).
+  // Generate piece_id BEFORE the temp selfie upload so we can key the temp
+  // file by the per-swap UUID instead of the persistent userId. This closes
+  // the cross-user selfie leak vector — previously stock/_welcome_src_<userId>.jpg
+  // was publicly fetchable by anyone who knew a userId (which appears in logs
+  // and is not a secret). With piece_id as the key, brute-forcing requires
+  // guessing a 122-bit UUID, and the file is cleaned up on callback OR by the
+  // hourly janitor cron (whichever fires first). Audit 2026-05-26 C3.
+  const pieceId = uid();
+  const r2Key = `generated/${pieceId}.mp4`;
+  const caption = pickWelcomeCaption();
+
   const sel = await env.SELFIES.get(primarySelfieKey);
   if (!sel) {
     console.error('welcome-video skipped: primary selfie missing in R2', { primarySelfieKey });
     return null;
   }
-  const tempStockKey = `stock/_welcome_src_${userId}.jpg`;
+  const tempStockKey = `stock/_welcome_src_${pieceId}.jpg`;
   await env.STOCK.put(tempStockKey, sel.body, {
     httpMetadata: { contentType: 'image/jpeg' },
   });
-  const sourceImageUrlFlat = `https://api.mainfeed.app/public/stock/_welcome_src_${userId}.jpg`;
-
-  const pieceId = uid();
-  const r2Key = `generated/${pieceId}.mp4`;  // matches the pod's default output_r2_key shape
-  const caption = pickWelcomeCaption();
+  const sourceImageUrlFlat = `https://api.mainfeed.app/public/stock/_welcome_src_${pieceId}.jpg`;
 
   // Insert pending generated_pieces row BEFORE firing pod, so the feed shows a
   // placeholder immediately and the callback has a row to update.
@@ -1723,15 +1723,34 @@ async function handleAdminStockFile(request, env, origin, filename) {
 
 // GET /public/stock/:filename — PUBLIC (no auth) stock file serving so external services can fetch as swap input.
 // Filename must include extension (e.g. cop_s09_patrol_shimmy_f.mp4).
+//
+// Defense-in-depth for temp selfie files (`_welcome_src_<pieceId>.jpg`,
+// audit 2026-05-26 C4): require any filename starting with `_welcome_src_`
+// to match `_welcome_src_<uuid-v4>.jpg` exactly. Other underscore-prefixed
+// keys (or malformed UUIDs) get 404'd before R2 is even consulted, blocking
+// brute-force scrapes / enumeration of internal naming patterns.
 async function handlePublicStockFile(request, env, origin, filename) {
   const safeName = filename.replace(/[^A-Za-z0-9_.-]/g, '_');
+
+  if (safeName.startsWith('_')) {
+    const TEMP_SELFIE_PATTERN = /^_welcome_src_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/i;
+    if (!TEMP_SELFIE_PATTERN.test(safeName)) return errResp('not_found', 404, origin);
+  }
+
   const r2Key = `stock/${safeName}`;
   const obj = await env.STOCK.get(r2Key);
   if (!obj) return errResp('not_found', 404, origin);
+
+  // For temp selfies, set no-store so CDN doesn't cache. The cleanup-on-callback
+  // would otherwise be undermined by a cached copy living in CF's edge.
+  const isTempSelfie = safeName.startsWith('_welcome_src_');
+  const contentType = isTempSelfie ? 'image/jpeg' : 'video/mp4';
+  const cacheControl = isTempSelfie ? 'no-store, private' : 'public, max-age=3600';
+
   return new Response(obj.body, {
     headers: {
-      'Content-Type': 'video/mp4',
-      'Cache-Control': 'public, max-age=3600',
+      'Content-Type': contentType,
+      'Cache-Control': cacheControl,
       'Access-Control-Allow-Origin': '*',
     },
   });
@@ -1825,8 +1844,23 @@ async function handleAdminSwapQueue(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   const sourceImageUrl = String(body.source_image_url || '').trim();
   const targetFilename = String(body.target_filename || '').replace(/[^A-Za-z0-9_.-]/g, '_');
+  // Require user_id since 2026-05-26 — admin swaps now always create an
+  // owned generated_pieces row so the output file at generated/<pieceId>.mp4
+  // is never an orphan (would otherwise be a vector for piece-collision /
+  // overwrite of a real user's piece if request_id is reused). Audit C1.
+  const userId = String(body.user_id || '').trim();
+  const caption = typeof body.caption === 'string' ? body.caption : null;
+  const handle = typeof body.handle === 'string' ? body.handle : null;
   if (!sourceImageUrl) return errResp('missing_source_image_url', 400, origin);
   if (!targetFilename) return errResp('missing_target_filename', 400, origin);
+  if (!userId) return errResp('missing_user_id', 400, origin, {
+    hint: 'pass "user_id" in the body — admin swaps must be attached to a real user so the piece row is owned + cleaned up correctly',
+  });
+
+  // Verify the user exists. Without this an attacker with the admin token
+  // could inject pieces into D1 keyed to non-existent users, leaking storage.
+  const userRow = await env.DB.prepare('SELECT id FROM users WHERE id = ? AND deleted_at IS NULL').bind(userId).first();
+  if (!userRow) return errResp('user_not_found', 404, origin, { user_id: userId });
 
   // Verify the stock clip exists before sending the pod off on a wild goose chase
   const stockKey = `stock/${targetFilename}.mp4`;
@@ -1836,9 +1870,36 @@ async function handleAdminSwapQueue(request, env, origin) {
   const requestId = String(body.request_id || crypto.randomUUID());
   const targetVideoUrl = `https://api.mainfeed.app/public/stock/${targetFilename}.mp4`;
   const callbackUrl = 'https://api.mainfeed.app/api/swap/complete';
-  const outputR2Key = typeof body.output_r2_key === 'string' && body.output_r2_key
-    ? body.output_r2_key
-    : `generated/${requestId}.mp4`;
+  const outputR2Key = `generated/${requestId}.mp4`;
+  // Reject body-supplied output_r2_key — admin should never override the
+  // pieceId-keyed default since it'd un-tie the file from the piece row.
+  if (body.output_r2_key && body.output_r2_key !== outputR2Key) {
+    return errResp('output_r2_key_not_overridable', 400, origin, {
+      hint: 'output_r2_key is auto-derived from request_id; do not pass it',
+    });
+  }
+
+  // Refuse to clobber an existing piece. With UUID request_ids the collision
+  // chance is ~0, but enforcing the invariant lets us safely INSERT below.
+  const existing = await env.DB.prepare(
+    'SELECT id FROM generated_pieces WHERE id = ?'
+  ).bind(requestId).first();
+  if (existing) {
+    return errResp('request_id_collision', 409, origin, {
+      hint: 'a piece with that id already exists — pass a fresh request_id or omit it to auto-generate',
+    });
+  }
+
+  // INSERT the piece row BEFORE firing pod so callback has a target +
+  // ownership/cleanup are tracked from the start.
+  const ts = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO generated_pieces
+       (id, user_id, diary_entry_id, type, caption, r2_key, mime_type,
+        generation_provider, generation_prompt, created_at, download_count,
+        share_count, status, scenario, stock_library_id)
+     VALUES (?, ?, NULL, 'video', ?, ?, 'video/mp4', 'dreamidv-faster-admin', NULL, ?, 0, 0, 'processing', 'admin_test', NULL)`
+  ).bind(requestId, userId, caption, outputR2Key, ts).run();
 
   const payload = {
     request_id: requestId,
@@ -1857,8 +1918,8 @@ async function handleAdminSwapQueue(request, env, origin) {
     frame_num: Number.isFinite(body.frame_num) ? Number(body.frame_num) : 120,
     // Pod burns these into the video (caption top + watermark bar) per
     // pod/render_overlay.py. Optional — omit them in admin tests to skip burn-in.
-    caption: typeof body.caption === 'string' ? body.caption : null,
-    handle: typeof body.handle === 'string' ? body.handle : null,
+    caption,
+    handle,
   };
 
   const podUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';
@@ -1873,6 +1934,10 @@ async function handleAdminSwapQueue(request, env, origin) {
       body: JSON.stringify(payload),
     });
   } catch (err) {
+    // Mark the row failed so it doesn't sit `processing` forever.
+    try {
+      await env.DB.prepare("UPDATE generated_pieces SET status = 'failed' WHERE id = ?").bind(requestId).run();
+    } catch (_) {}
     return errResp('pod_unreachable', 502, origin, {
       pod_url: podUrl,
       detail: String(err).slice(0, 400),
@@ -1884,6 +1949,9 @@ async function handleAdminSwapQueue(request, env, origin) {
   try { podJson = JSON.parse(podText); } catch (_) { /* keep as text */ }
 
   if (!res.ok) {
+    try {
+      await env.DB.prepare("UPDATE generated_pieces SET status = 'failed' WHERE id = ?").bind(requestId).run();
+    } catch (_) {}
     return errResp(`pod_${res.status}`, 502, origin, {
       pod_url: podUrl,
       pod_response: podJson || podText.slice(0, 400),
@@ -1928,10 +1996,27 @@ async function handleSwapComplete(request, env, origin) {
   // Production wiring: the worker's generated_pieces row was inserted with
   // status='processing' and id=requestId. Flip it to 'ready' or 'failed'.
   const piece = await env.DB.prepare(
-    'SELECT id, user_id, status FROM generated_pieces WHERE id = ?'
+    'SELECT id, user_id, status, r2_key FROM generated_pieces WHERE id = ?'
   ).bind(requestId).first();
   if (piece) {
-    if (status === 'completed') {
+    // Defense-in-depth: if the pod reports back a different r2_key than the
+    // one we issued at queue time, refuse to flip status to ready. Prevents
+    // a pod-side bug from delivering Output A as Piece B's file. Audit
+    // 2026-05-26 C2.
+    const callbackR2Key = typeof body.r2_key === 'string' ? body.r2_key : null;
+    const r2KeyMismatch = status === 'completed'
+      && callbackR2Key && piece.r2_key && callbackR2Key !== piece.r2_key;
+
+    if (r2KeyMismatch) {
+      await env.DB.prepare(
+        `UPDATE generated_pieces SET status = 'failed' WHERE id = ?`
+      ).bind(requestId).run();
+      console.error('[swap.complete] r2_key mismatch — refusing to mark ready', {
+        request_id: requestId,
+        expected: piece.r2_key,
+        got: callbackR2Key,
+      });
+    } else if (status === 'completed') {
       await env.DB.prepare(
         `UPDATE generated_pieces
            SET status = 'ready'
@@ -1945,10 +2030,11 @@ async function handleSwapComplete(request, env, origin) {
       console.error('[swap.complete] piece marked failed', { request_id: requestId, error: errMsg });
     }
 
-    // Best-effort cleanup of the temporary public selfie copy we made for the
-    // pod to fetch (welcome flow). Safe to ignore failure.
+    // Best-effort cleanup of the temporary public selfie copy. Keyed by
+    // piece.id now (was piece.user_id pre-2026-05-26), closing the leak
+    // where one persistent key was reused across all of a user's signups.
     try {
-      await env.STOCK.delete(`stock/_welcome_src_${piece.user_id}.jpg`);
+      await env.STOCK.delete(`stock/_welcome_src_${piece.id}.jpg`);
     } catch (_) {}
   } else {
     console.warn('[swap.complete] no matching piece for request_id', requestId);
