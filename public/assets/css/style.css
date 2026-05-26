@@ -32,12 +32,21 @@ html {
   font: 16px/1.5 system-ui, -apple-system, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
 }
 
 body {
   min-height: 100vh;
   min-height: 100dvh;
   background: var(--bg);
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
+body.mf-app,
+body.mf-app .mf-app-main {
+  touch-action: pan-y;
 }
 
 a { color: inherit; text-decoration: none; }
@@ -1002,12 +1011,14 @@ body.mf-app {
   color: var(--text-dim);
 }
 
-/* Feed is full-bleed — break out of the container's 20px horizontal padding */
+/* Feed: stacked gradient-bordered cards with breathing room between them.
+   Used to be full-bleed (margin: 0 -20px, gap: 0). Switched to card layout
+   2026-05-26 so each piece reads as a distinct unit. */
 .mf-feed {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  margin: 0 -20px;
+  gap: 14px;
+  margin: 0;
 }
 
 .mf-feed-empty {
@@ -1028,10 +1039,12 @@ body.mf-app {
 }
 
 .mf-piece {
-  background: var(--bg);
+  /* The card itself is the 2px brand-gradient border; the inner stage +
+     actions paint over the middle, leaving the gradient visible as a ring. */
+  background: linear-gradient(135deg, #000b21 0%, #003f82 35%, #4ca2b5 65%, #ffd27f 100%);
+  padding: 2px;
   border: 0;
-  border-radius: 0;
-  border-bottom: 1px solid var(--border);
+  border-radius: 18px;
   overflow: hidden;
 }
 
@@ -1039,6 +1052,8 @@ body.mf-app {
   position: relative;
   width: 100%;
   background: var(--surface-2);
+  border-radius: 16px 16px 0 0;
+  overflow: hidden;
 }
 
 .mf-piece-media {
@@ -1118,10 +1133,9 @@ body.mf-app {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
-/* Full-width black action bar, edge-to-edge under the video.
-   - Top + bottom edges: thin gradient line via ::before / ::after
-   - Inside: 3 click areas (Download | Share | Publish), each separated
-     by a short vertical gradient line via :nth-child + ::before */
+/* Action row under the video, inside the card. The outer card border (on
+   .mf-piece) replaces the old top/bottom gradient hairlines this row used
+   to draw, so those ::before/::after pseudo-elements are now no-ops. */
 .mf-piece-actions {
   display: flex;
   gap: 0;
@@ -1129,19 +1143,12 @@ body.mf-app {
   margin: 0;
   background: #000;
   position: relative;
+  border-radius: 0 0 16px 16px;
 }
 .mf-piece-actions::before,
 .mf-piece-actions::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 1.5px;
-  background: linear-gradient(90deg, #003f82, #4ca2b5, #ffd27f);
-  pointer-events: none;
+  display: none;
 }
-.mf-piece-actions::before { top: 0; }
-.mf-piece-actions::after  { bottom: 0; }
 
 .mf-piece-action {
   flex: 1;

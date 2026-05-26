@@ -1064,6 +1064,10 @@ async function generateWelcomeVideoSwap(env, userId, handle, gender, primarySelf
     sample_steps: 16,
     sample_guide_scale_img: 4.0,
     size: '832*480',
+    // 5s @ 24fps = 120 frames. Locked 2026-05-26 as the Mainfeed standard
+    // duration. DreamID-V's default (81 frames / 3.4s) was clipping the
+    // punchline of every stock clip.
+    frame_num: 120,
     caption,
     handle,
   };
@@ -1844,6 +1848,8 @@ async function handleAdminSwapQueue(request, env, origin) {
       ? Number(body.sample_guide_scale_img) : 4.0,
     // DreamID-V argparse only accepts 832*480 / 480*832 / 720*1280 / 1280*720 / 1024*1024 (asterisk-separated).
     size: typeof body.size === 'string' ? body.size : '832*480',
+    // 5s @ 24fps = 120 frames. Locked Mainfeed standard.
+    frame_num: Number.isFinite(body.frame_num) ? Number(body.frame_num) : 120,
     // Pod burns these into the video (caption top + watermark bar) per
     // pod/render_overlay.py. Optional — omit them in admin tests to skip burn-in.
     caption: typeof body.caption === 'string' ? body.caption : null,
