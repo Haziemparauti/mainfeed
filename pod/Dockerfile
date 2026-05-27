@@ -11,54 +11,63 @@
 #
 # Validated DreamID-V invocation pattern (cop_s07 retest, 2026-05-25 evening):
 #   python generate_dreamidv_faster.py --src_image ... --ref_video ... \
-#     --sample_steps 16 --sample_guide_scale_img 4.0 --size 832x480
+#     --sample_steps 16 --sample_guide_scale_img 4.0 --size 832*480
 
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
-# === System deps ===
+# === System deps (single apt layer — libcairo2 lives here with everything else
+# instead of in its own RUN, so we don't pay for a second apt-get update layer) ===
 RUN apt-get update -qq && apt-get install -y -qq \
-      ffmpeg libcudnn9-cuda-12 unzip wget git curl ca-certificates \
+      ffmpeg libcudnn9-cuda-12 libcairo2 unzip wget git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# === Clone DreamID-V at pinned commit ===
+# === Clone DreamID-V at pinned commit + prune .git + patch upstream quirks ===
 # Source: Haziemparauti/DreamID-V (fork of bytedance/DreamID-V) — pinned to the
 # exact commit validated on 2026-05-25 against cop_s07_coffee_plaza_f. Fork
 # insulates the production build from upstream rebase / delete / license shift.
+# .git history is dropped after checkout — runtime never reads it (saves ~50 MB).
+# Patches:
+#   1. requirements.txt has `mediapipe==0.10.5#numpy must < 2.0` — invalid PEP 440
+#      (missing space before #). Fix in-place.
+#   2. Strip flash_attn from requirements — it must install separately AFTER
+#      torch is settled with --no-build-isolation (handled below).
 ARG DREAMIDV_REPO=https://github.com/Haziemparauti/DreamID-V.git
 ARG DREAMIDV_SHA=9b589940577559c91481fb3a13bae000a55f97a1
 RUN git clone $DREAMIDV_REPO /root/dreamidv \
-    && cd /root/dreamidv && git checkout $DREAMIDV_SHA
+    && cd /root/dreamidv && git checkout $DREAMIDV_SHA \
+    && rm -rf /root/dreamidv/.git \
+    && sed -i 's|mediapipe==0.10.5#numpy|mediapipe==0.10.5  # numpy|' requirements.txt \
+    && sed -i '/^flash_attn/d' requirements.txt
 
 WORKDIR /root/dreamidv
 
-# === Patch upstream quirks (carry forward from last session's install run) ===
-# 1. requirements.txt has `mediapipe==0.10.5#numpy must < 2.0` — invalid PEP 440 (missing space before #)
-# 2. flash_attn install conflicts with default torch — install separately with --no-build-isolation
-RUN sed -i 's|mediapipe==0.10.5#numpy|mediapipe==0.10.5  # numpy|' requirements.txt \
-    && sed -i '/^flash_attn/d' requirements.txt
-
-# === Python deps (order matters — pin torch back AFTER face-alignment downgrades it) ===
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir decord
-RUN pip install --no-cache-dir packaging ninja \
+# === Python deps — ONE RUN ===
+# Why single-layer: pip uninstall in a later layer can't reclaim space from an
+# earlier layer (Docker layers stack — deletions only mask, don't free). Running
+# all pip work in one RUN means the onnxruntime uninstall/replace actually
+# reclaims the CPU-only build instead of leaving it as dead weight in an earlier layer.
+#
+# Order matters:
+#   1. DreamID-V requirements (sans flash_attn — patched out above)
+#   2. Replace stock onnxruntime (CPU only) with onnxruntime-gpu. DWPose runs
+#      pose+mask extraction on every swap; CPU-ORT does ~5-8s per frame on A6000,
+#      GPU-ORT brings it under 1s. ~10x speedup on the dominant per-swap cost.
+#   3. decord — missing from upstream requirements but referenced by
+#      load_image_latent_ref_ip_video.
+#   4. Server + burn-in deps (REST, R2 client, image rendering).
+#   5. flash_attn LAST + --no-build-isolation. If it picks the wrong torch
+#      during build the pod will OOM at swap time.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip uninstall -y onnxruntime 2>/dev/null || true \
+    && pip install --no-cache-dir \
+         onnxruntime-gpu \
+         decord \
+         fastapi 'uvicorn[standard]' httpx boto3 huggingface_hub \
+         Pillow cairosvg \
+         packaging ninja \
     && pip install --no-cache-dir flash_attn --no-build-isolation
 
-# Replace stock onnxruntime (CPU only) with onnxruntime-gpu so DreamID-V's DWPose
-# pose+mask preprocessing runs on the GPU. CPU-ORT does ~5-8s per frame on RTX A6000;
-# GPU-ORT brings it to <1s per frame (~10x speedup on the dominant per-swap cost).
-RUN pip uninstall -y onnxruntime onnxruntime-gpu 2>/dev/null || true \
-    && pip install --no-cache-dir onnxruntime-gpu
-
-RUN pip install --no-cache-dir fastapi 'uvicorn[standard]' httpx boto3 huggingface_hub
-
-# === Post-swap branding (caption + watermark burn-in via Pillow + FFmpeg) ===
-# Pillow renders the overlay PNG; FFmpeg composites it onto every frame.
-# cairosvg rasterizes the real Mainfeed brand SVG at pod startup so the
-# watermark uses the actual brand mark (not a programmatic approximation).
-RUN apt-get update -qq && apt-get install -y -qq libcairo2 && \
-    rm -rf /var/lib/apt/lists/* && \
-    pip install --no-cache-dir Pillow cairosvg
-
+# === Post-swap branding assets (caption + watermark burn-in) ===
 # Bundle local-source-of-truth assets:
 #   Anton          (SIL OFL) — bold condensed, meme caption font
 #   Inter Medium   (SIL OFL) — premium SaaS sans, watermark text (locked
