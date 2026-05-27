@@ -249,6 +249,18 @@ def _ensure_symlink(link: Path, target: Path) -> None:
     logging.info(f"[flux_pulid_runtime] symlink {link} → {target}")
 
 
+# @torch.inference_mode() is CRITICAL here — without it PyTorch retains
+# autograd metadata for every activation during the forward pass, roughly
+# DOUBLING peak VRAM at Flux's attention scale (4500-token seq × 24 heads
+# × 19+38 blocks). Caught 2026-05-27 night after the A6000 OOMed at 47 GB
+# during a denoise phase that should have peaked under 30 GB.
+# PuLID's reference app_flux.py has the same decorator on its generate_image.
+def _torch_inference_mode_decorator(fn):
+    import torch
+    return torch.inference_mode()(fn)
+
+
+@_torch_inference_mode_decorator
 def generate_image(
     selfie_path: str,
     prompt: str,
