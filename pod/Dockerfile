@@ -75,10 +75,10 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir \
          onnxruntime-gpu \
          decord \
-         fastapi 'uvicorn[standard]' httpx boto3 huggingface_hub \
+         fastapi 'uvicorn[standard]' httpx huggingface_hub \
          Pillow cairosvg \
          packaging ninja \
-         sentencepiece protobuf einops \
+         sentencepiece protobuf einops torchsde \
          insightface facexlib timm \
     && pip install --no-cache-dir flash_attn --no-build-isolation
 
