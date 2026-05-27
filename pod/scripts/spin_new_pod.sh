@@ -292,6 +292,8 @@ echo "▶ Writing env file + starting swap_server.py..."
 
 ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" \
   POD_SECRET="$POD_SECRET" \
+  DREAMIDV_ENABLED="${DREAMIDV_ENABLED:-}" \
+  FLUX_PULID_ENABLED="${FLUX_PULID_ENABLED:-}" \
   bash -s <<'REMOTE'
 set -e
 # Minimal env file — most defaults are baked into the Dockerfile ENV (see
@@ -302,6 +304,8 @@ set -e
 cat > /root/pod_env.sh <<ENV
 SWAP_POD_SECRET=$POD_SECRET
 DEBUG_KEEP_WORKDIR=1
+${DREAMIDV_ENABLED:+DREAMIDV_ENABLED=$DREAMIDV_ENABLED}
+${FLUX_PULID_ENABLED:+FLUX_PULID_ENABLED=$FLUX_PULID_ENABLED}
 ENV
 chmod 600 /root/pod_env.sh
 

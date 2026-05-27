@@ -706,16 +706,30 @@ async def on_startup() -> None:
     # Load DreamID-V once into GPU memory. Replaces the previous
     # subprocess-per-swap behavior — saves ~10-15s of cold-start per request
     # and lets future torch.compile/TRT optimizations cache across swaps.
-    print("[swap_server] loading DreamID-V pipeline (one-time)...", flush=True)
-    load_started = time.time()
-    await asyncio.get_event_loop().run_in_executor(
-        None,
-        lambda: dreamidv_runtime.init(
-            weights_dir=str(WEIGHTS_DIR),
-            dreamidv_dir=str(DREAMIDV_DIR),
-        ),
-    )
-    print(f"[swap_server] DreamID-V loaded in {round(time.time() - load_started, 1)}s", flush=True)
+    # Gated behind DREAMIDV_ENABLED=1 so image-only test pods on tight-VRAM
+    # cards (e.g. 4090 24 GB) can boot Flux+PuLID without DreamID-V's ~17 GB
+    # eating into the headroom Flux needs during denoise.
+    if os.environ.get("DREAMIDV_ENABLED", "1") == "1":
+        print("[swap_server] loading DreamID-V pipeline (one-time)...", flush=True)
+        load_started = time.time()
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: dreamidv_runtime.init(
+                    weights_dir=str(WEIGHTS_DIR),
+                    dreamidv_dir=str(DREAMIDV_DIR),
+                ),
+            )
+            print(f"[swap_server] DreamID-V loaded in {round(time.time() - load_started, 1)}s", flush=True)
+        except Exception as e:
+            # Non-fatal — pod can still serve /image (Flux+PuLID) even when
+            # DreamID-V fails to load. Common cause: insufficient VRAM (24 GB
+            # cards can't host Flux + DreamID-V concurrently). /swap returns
+            # 503 in that case (see guard in the /swap endpoint).
+            STATE.last_error = f"dreamidv init failed: {str(e)[:500]}"
+            print(f"[swap_server] WARN DreamID-V init FAILED — /swap disabled, /image still works: {e}", flush=True)
+    else:
+        print("[swap_server] DREAMIDV_ENABLED=0 — skipping DreamID-V load (swap endpoint disabled)", flush=True)
 
     STATE.model_loaded = True
     print(f"[swap_server] ready on port {PORT}", flush=True)
@@ -745,6 +759,8 @@ async def swap(req: SwapRequest, background: BackgroundTasks,
     require_auth(authorization)
     if not STATE.model_loaded:
         raise HTTPException(503, "model not loaded yet, try again in 30s")
+    if not dreamidv_runtime.is_ready():
+        raise HTTPException(503, "dreamidv not loaded (check DREAMIDV_ENABLED env); /image remains available")
     STATE.in_flight += 1
     background.add_task(run_swap, req)
     return {
