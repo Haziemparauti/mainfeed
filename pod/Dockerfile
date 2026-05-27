@@ -39,6 +39,19 @@ RUN git clone $DREAMIDV_REPO /root/dreamidv \
     && sed -i 's|mediapipe==0.10.5#numpy|mediapipe==0.10.5  # numpy|' requirements.txt \
     && sed -i '/^flash_attn/d' requirements.txt
 
+# === Clone PuLID at pinned commit (for Flux.1-schnell image generation path) ===
+# Source: Haziemparauti/PuLID (fork of ToTheBeginning/PuLID) — same supply-chain
+# pattern as DreamID-V. Pinned to the 2025-07-31 "support FLUX.1-Krea-dev" SHA
+# which works with both Flux.1-schnell + Flux.1-dev variants via the same code.
+# License: Apache 2.0 (verified 2026-05-27, both PuLID code + PuLID-FLUX weights).
+# Used by pod/flux_pulid_runtime.py for the 10/day cosplay-image quota
+# (see [[mainfeed_image_library_architecture]]).
+ARG PULID_REPO=https://github.com/Haziemparauti/PuLID.git
+ARG PULID_SHA=1aa2fc7df4bf51080df39f355f9abdc1cbfefbaa
+RUN git clone $PULID_REPO /root/pulid \
+    && cd /root/pulid && git checkout $PULID_SHA \
+    && rm -rf /root/pulid/.git
+
 WORKDIR /root/dreamidv
 
 # === Python deps — ONE RUN ===
@@ -65,7 +78,17 @@ RUN pip install --no-cache-dir -r requirements.txt \
          fastapi 'uvicorn[standard]' httpx boto3 huggingface_hub \
          Pillow cairosvg \
          packaging ninja \
+         'diffusers>=0.30' accelerate sentencepiece protobuf einops \
+         insightface \
     && pip install --no-cache-dir flash_attn --no-build-isolation
+
+# === Install PuLID's own requirements (if any not already covered above) ===
+# PuLID upstream requirements.txt is small (mostly already-covered deps); install
+# anything missing without forcing a torch reinstall.
+RUN if [ -f /root/pulid/requirements.txt ]; then \
+      sed -i '/^torch/d; /^flash[_-]attn/d; /^onnxruntime/d' /root/pulid/requirements.txt && \
+      pip install --no-cache-dir -r /root/pulid/requirements.txt; \
+    fi
 
 # === Post-swap branding assets (caption + watermark burn-in) ===
 # Bundle local-source-of-truth assets:

@@ -78,6 +78,13 @@ DREAMIDV_FASTER_CKPT = WEIGHTS_DIR / "dreamidv_faster.pth"
 WAN21_DIR = WEIGHTS_DIR / "wan2.1"
 DWPOSE_DIR = DREAMIDV_DIR / "pose" / "models"
 
+# Flux + PuLID paths (for the cosplay-image 10/day quota — separate code path
+# from DreamID-V video swaps). See [[mainfeed_image_library_architecture]].
+FLUX_DIR = WEIGHTS_DIR / "flux1-schnell"
+PULID_CKPT = WEIGHTS_DIR / "pulid" / "pulid_flux_v0.9.1.safetensors"
+INSIGHTFACE_DIR = WEIGHTS_DIR / "insightface" / "models" / "antelopev2"
+PULID_DIR = Path(os.environ.get("PULID_DIR", "/root/pulid"))
+
 # R2 (Cloudflare S3-compatible) — optional. If creds are present the pod
 # pulls weights from R2 mirror (~30s). Without creds it falls back to
 # HuggingFace (~6 min cold). Output upload no longer uses these creds —
@@ -154,9 +161,11 @@ class SwapRequest(BaseModel):
 
 # Weight manifest — used by both R2 and HF paths.
 # Each entry: (local_path, r2_key, hf_repo_or_None, hf_filename_or_None)
-# Entries with hf_repo=None are pulled by snapshot_download (Wan-2.1 bundle).
+# Entries with hf_repo=None are pulled by snapshot_download in a bundle
+# (the runtime resolves which bundle by inspecting the local path).
 def _weight_manifest():
     return [
+        # === DreamID-V (video swap engine) ===
         (DREAMIDV_FASTER_CKPT,
          f"{R2_WEIGHTS_PREFIX}dreamidv_faster.pth",
          "XuGuo699/DreamID-V", "dreamidv_faster.pth"),
@@ -166,6 +175,8 @@ def _weight_manifest():
         (DWPOSE_DIR / "yolox_l.onnx",
          f"{R2_WEIGHTS_PREFIX}dwpose/yolox_l.onnx",
          "XuGuo699/DreamID-V", "yolox_l.onnx"),
+        # === Wan-2.1 (base diffusion model for DreamID-V) ===
+        # Pulled as a snapshot_download bundle (hf_repo=None signals bundle).
         (WAN21_DIR / "Wan2.1_VAE.pth",
          f"{R2_WEIGHTS_PREFIX}wan2.1/Wan2.1_VAE.pth",
          None, None),
@@ -175,6 +186,40 @@ def _weight_manifest():
         (WAN21_DIR / "diffusion_pytorch_model.safetensors",
          f"{R2_WEIGHTS_PREFIX}wan2.1/diffusion_pytorch_model.safetensors",
          None, None),
+        # === PuLID-FLUX adapter (single safetensors file) ===
+        # Used by pod/flux_pulid_runtime.py for the cosplay-image path.
+        # License: Apache 2.0 (verified 2026-05-27).
+        (PULID_CKPT,
+         f"{R2_WEIGHTS_PREFIX}pulid/pulid_flux_v0.9.1.safetensors",
+         "guozinan/PuLID", "pulid_flux_v0.9.1.safetensors"),
+        # === Flux.1-schnell (base model for image generation) ===
+        # hf_repo='flux-bundle' marks it as snapshot_download target — separate
+        # bundle from Wan-2.1. Apache 2.0. ~25 GB total snapshot. Pulled into
+        # FLUX_DIR with diffusers-format layout (subfolders for transformer,
+        # vae, text_encoder, text_encoder_2, tokenizer, tokenizer_2, scheduler).
+        (FLUX_DIR / "model_index.json",
+         f"{R2_WEIGHTS_PREFIX}flux1-schnell/model_index.json",
+         "flux-bundle", None),
+        # === InsightFace antelopev2 (face detection + embedding for PuLID) ===
+        # PuLID uses InsightFace's antelopev2 face-recognition model to extract
+        # the identity embedding from the user's selfie before conditioning Flux.
+        # Auto-downloaded by insightface lib on first use; we pre-stage to R2
+        # to keep boot deterministic.
+        (INSIGHTFACE_DIR / "1k3d68.onnx",
+         f"{R2_WEIGHTS_PREFIX}insightface/antelopev2/1k3d68.onnx",
+         "MonsterMMORPG/tools", "antelopev2/1k3d68.onnx"),
+        (INSIGHTFACE_DIR / "2d106det.onnx",
+         f"{R2_WEIGHTS_PREFIX}insightface/antelopev2/2d106det.onnx",
+         "MonsterMMORPG/tools", "antelopev2/2d106det.onnx"),
+        (INSIGHTFACE_DIR / "genderage.onnx",
+         f"{R2_WEIGHTS_PREFIX}insightface/antelopev2/genderage.onnx",
+         "MonsterMMORPG/tools", "antelopev2/genderage.onnx"),
+        (INSIGHTFACE_DIR / "glintr100.onnx",
+         f"{R2_WEIGHTS_PREFIX}insightface/antelopev2/glintr100.onnx",
+         "MonsterMMORPG/tools", "antelopev2/glintr100.onnx"),
+        (INSIGHTFACE_DIR / "scrfd_10g_bnkps.onnx",
+         f"{R2_WEIGHTS_PREFIX}insightface/antelopev2/scrfd_10g_bnkps.onnx",
+         "MonsterMMORPG/tools", "antelopev2/scrfd_10g_bnkps.onnx"),
     ]
 
 
@@ -200,6 +245,9 @@ def ensure_weights() -> None:
     WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
     WAN21_DIR.mkdir(parents=True, exist_ok=True)
     DWPOSE_DIR.mkdir(parents=True, exist_ok=True)
+    FLUX_DIR.mkdir(parents=True, exist_ok=True)
+    PULID_CKPT.parent.mkdir(parents=True, exist_ok=True)
+    INSIGHTFACE_DIR.mkdir(parents=True, exist_ok=True)
 
     manifest = _weight_manifest()
     missing = [m for m in manifest if not _exists_and_nonempty(m[0])]
@@ -227,16 +275,18 @@ def ensure_weights() -> None:
     print(f"[ensure_weights] HuggingFace — fetching {len(missing)} files "
           "(set HARDEN_WEIGHTS_R2=1 + R2 creds to use our R2 mirror)", flush=True)
 
-    # Individual hf_hub_downloads for files with explicit hf_repo
+    # Individual hf_hub_downloads for files with explicit hf_repo (skipping bundle markers).
+    BUNDLE_MARKERS = {"flux-bundle"}
     for local, _, hf_repo, hf_filename in missing:
-        if hf_repo and not _exists_and_nonempty(local):
+        if hf_repo and hf_repo not in BUNDLE_MARKERS and not _exists_and_nonempty(local):
             print(f"  hf_hub_download {hf_repo}:{hf_filename}", flush=True)
             hf_hub_download(
                 repo_id=hf_repo, filename=hf_filename,
                 local_dir=str(local.parent), token=HF_TOKEN,
             )
 
-    # Wan-2.1 bundle via snapshot_download (only if any wan2.1 file is still missing)
+    # Wan-2.1 bundle via snapshot_download (only if any wan2.1 file is still missing).
+    # hf_repo=None marks Wan-2.1 entries.
     wan_missing = [m for m in missing if m[2] is None and not _exists_and_nonempty(m[0])]
     if wan_missing:
         print("  snapshot_download Wan-AI/Wan2.1-T2V-1.3B (allow_patterns)", flush=True)
@@ -244,6 +294,19 @@ def ensure_weights() -> None:
             repo_id="Wan-AI/Wan2.1-T2V-1.3B",
             local_dir=str(WAN21_DIR),
             allow_patterns=["*.pth", "*.safetensors", "config.json", "google/**"],
+            token=HF_TOKEN,
+        )
+
+    # Flux.1-schnell bundle via snapshot_download (diffusers-format repo with
+    # subfolders for transformer / vae / text_encoder / etc). hf_repo='flux-bundle'
+    # marks the entry. ~25 GB total; takes ~5-7 min cold from HuggingFace.
+    flux_missing = [m for m in missing if m[2] == "flux-bundle" and not _exists_and_nonempty(m[0])]
+    if flux_missing:
+        print("  snapshot_download black-forest-labs/FLUX.1-schnell (allow_patterns)", flush=True)
+        snapshot_download(
+            repo_id="black-forest-labs/FLUX.1-schnell",
+            local_dir=str(FLUX_DIR),
+            allow_patterns=["*.safetensors", "*.json", "*.txt", "*.model"],
             token=HF_TOKEN,
         )
 
