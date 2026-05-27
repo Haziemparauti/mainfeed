@@ -1021,6 +1021,76 @@ body.mf-app {
   margin: 0;
 }
 
+/* ============ Content-mode selector ============
+   Three full-width cards sitting under the header, above the feed. State-only
+   for now — `data-mode` is read by app.js to update visual state. Backend
+   filtering wires later via a piece→mode mapping. */
+.mf-modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 8px 12px 14px;
+  margin: 0;
+}
+
+.mf-mode {
+  /* Inactive cards: subtle dark surface, no gradient. The whole point of
+     the "active" state visually popping is that inactive ones recede. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 6px 11px;
+  min-height: 64px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  color: var(--text-mute, rgba(255, 255, 255, 0.6));
+  font: 600 12px/1.1 system-ui, -apple-system, "Inter", sans-serif;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mf-mode:active {
+  transform: scale(0.97);
+}
+
+.mf-mode-icon {
+  width: 22px;
+  height: 22px;
+  opacity: 0.85;
+}
+
+.mf-mode-label {
+  display: block;
+  white-space: nowrap;
+}
+
+/* Active card — 2px brand-gradient ring (matches the .mf-piece treatment)
+   and a soft inner dark fill that's still readable. Foreground text + icon
+   go full-white at active state. */
+.mf-mode--active {
+  position: relative;
+  background:
+    /* inner dark fill */
+    linear-gradient(rgba(0, 11, 33, 0.92), rgba(0, 11, 33, 0.92)) padding-box,
+    /* 4-color brand gradient as the border-box */
+    linear-gradient(135deg, #000b21 0%, #003f82 35%, #4ca2b5 65%, #ffd27f 100%) border-box;
+  border-color: transparent;
+  color: #fff;
+}
+
+.mf-mode--active .mf-mode-icon {
+  opacity: 1;
+}
+
 .mf-feed-empty {
   text-align: center;
   padding: 48px 16px;
@@ -1060,6 +1130,120 @@ body.mf-app {
   width: 100%;
   height: auto;
   display: block;
+}
+
+/* ============ Image-only premium treatment ============
+   Static images can feel flat next to autoplaying videos. Three subtle
+   touches on `.mf-piece--image` only — NEVER on video/GIF pieces:
+
+   1. Glass overlay (always on) — a thin highlight on the top edge + a soft
+      inner shadow at the bottom, so the image reads like a physical pane.
+   2. Periodic sheen sweep — a diagonal light streak that travels across
+      every ~7s. CSS animation, no JS, no interaction needed.
+   3. Subtle 3D wobble — ±1.5° rotateY on a 9s ease-in-out cycle. Gives the
+      "displayed object" feel without becoming a fidget toy.
+
+   All three are gated by the `.mf-piece--image` class — videos and GIFs
+   render with the same shell minus these effects. The `.mf-piece-glass`
+   wrapper is added by app.js when type==='image'. */
+
+.mf-piece--image {
+  perspective: 1200px;
+  perspective-origin: 50% 50%;
+}
+
+.mf-piece--image .mf-piece-stage {
+  transform-style: preserve-3d;
+  animation: mf-piece-wobble 9s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Stagger the wobble phase across cards so the feed doesn't look like a
+   marching band. Odd / even kicker is enough — feels organic. */
+.mf-piece--image:nth-child(even) .mf-piece-stage {
+  animation-direction: alternate-reverse;
+  animation-duration: 11s;
+}
+
+@keyframes mf-piece-wobble {
+  0%   { transform: rotateY(-1.5deg) rotateX(0.6deg); }
+  50%  { transform: rotateY( 1.5deg) rotateX(-0.6deg); }
+  100% { transform: rotateY(-1.5deg) rotateX(0.6deg); }
+}
+
+/* Glass overlay — a thin highlight band along the top edge and a darker
+   feathered band at the bottom inside the stage. Pointer-events off so it
+   doesn't intercept touches on the underlying image. */
+.mf-piece--image .mf-piece-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    /* top-edge highlight (suggests glass thickness catching light) */
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.18) 0%,
+      rgba(255, 255, 255, 0.04) 6%,
+      transparent 14%),
+    /* very subtle bottom-edge shadow */
+    linear-gradient(0deg,
+      rgba(0, 0, 0, 0.12) 0%,
+      transparent 18%);
+  mix-blend-mode: screen;
+  z-index: 2;
+  border-radius: inherit;
+}
+
+/* Sheen — diagonal light streak that periodically sweeps across. Uses a
+   long animation duration with a brief active window (the streak is visible
+   in the first ~12% then off-screen for the rest of the cycle, giving the
+   "occasional flash" feel without a JS timer). */
+.mf-piece--image .mf-piece-stage::after {
+  content: "";
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  width: 55%;
+  pointer-events: none;
+  background: linear-gradient(110deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.00) 38%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.00) 62%,
+    transparent 70%);
+  transform: translateX(-200%) rotate(8deg);
+  animation: mf-piece-sheen 7.5s ease-in-out infinite;
+  z-index: 3;
+  border-radius: inherit;
+  will-change: transform, opacity;
+  mix-blend-mode: screen;
+}
+
+/* Stagger sheens too — feels less synchronized across the feed. */
+.mf-piece--image:nth-child(3n+1) .mf-piece-stage::after { animation-delay: 0s;    animation-duration: 7.5s; }
+.mf-piece--image:nth-child(3n+2) .mf-piece-stage::after { animation-delay: 2.5s;  animation-duration: 8.5s; }
+.mf-piece--image:nth-child(3n)   .mf-piece-stage::after { animation-delay: 5s;    animation-duration: 9.5s; }
+
+@keyframes mf-piece-sheen {
+  0%   { transform: translateX(-200%) rotate(8deg); opacity: 0; }
+  6%   { opacity: 1; }
+  18%  { transform: translateX( 280%) rotate(8deg); opacity: 1; }
+  20%  { opacity: 0; }
+  /* long quiet phase — sheen sits off-screen, image looks static */
+  100% { transform: translateX( 280%) rotate(8deg); opacity: 0; }
+}
+
+/* Respect reduced-motion — disable wobble + sheen, keep static glass edge.
+   Static glass highlight is fine even at reduced-motion since it doesn't move. */
+@media (prefers-reduced-motion: reduce) {
+  .mf-piece--image .mf-piece-stage {
+    animation: none;
+    transform: none;
+  }
+  .mf-piece--image .mf-piece-stage::after {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 /* Meme caption overlays — Impact-style, big and centered. Uses a

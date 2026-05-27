@@ -143,17 +143,22 @@ function pieceCard(p) {
   // backend ever sends one through.)
   if (p.status && p.status !== 'ready') return '';
   const caption = String(p.caption || '').trim();
-  const mediaTag = p.type === 'video'
-    ? `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`
-    : `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`;
+  const isImage = p.type === 'image';
+  const mediaTag = isImage
+    ? `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`
+    : `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`;
   const pubText = p.public ? 'Unpublish' : 'Publish';
   const pubClass = p.public ? 'mf-piece-action mf-piece-action--active' : 'mf-piece-action';
+  // The `mf-piece--image` modifier gates the 3D wobble + glass sheen CSS in
+  // style.css. NEVER applied to video/GIF pieces — they have their own motion
+  // from autoplay and additional effects compete with it.
+  const pieceClass = isImage ? 'mf-piece mf-piece--image' : 'mf-piece';
   // Caption + watermark are BURNED INTO the video by the pod (see
   // pod/render_overlay.py). No HTML overlays — what you see in-feed is
   // exactly what you get when you download or share. data-caption is kept
   // for the image-only canvas-baking path below.
   return `
-    <article class="mf-piece" data-id="${p.id}" data-caption="${escapeHtml(caption)}" data-url="${API}${p.file_url}" data-public="${p.public ? '1' : '0'}">
+    <article class="${pieceClass}" data-id="${p.id}" data-type="${p.type}" data-caption="${escapeHtml(caption)}" data-url="${API}${p.file_url}" data-public="${p.public ? '1' : '0'}">
       <div class="mf-piece-stage">
         ${mediaTag}
       </div>
@@ -165,6 +170,30 @@ function pieceCard(p) {
     </article>
   `;
 }
+
+// ============ Content-mode selector ============
+// Three cards under the header: Just Me / Storytime / Fantasy. State-only
+// today — switching the active card doesn't yet filter the feed (no per-piece
+// mode-classifier on the backend). When that lands, this is where the
+// `loadFeed()` call gets a `?mode=<active>` query param.
+
+let _currentMode = 'just-me';
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.mf-mode');
+  if (!btn) return;
+  const mode = btn.dataset.mode;
+  if (!mode || mode === _currentMode) return;
+  _currentMode = mode;
+  document.querySelectorAll('.mf-mode').forEach((el) => {
+    const isActive = el.dataset.mode === mode;
+    el.classList.toggle('mf-mode--active', isActive);
+    el.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  // No re-render yet — the feed shows the same pieces regardless of mode.
+  // When backend mode-filtering lands, call loadFeed() here with the new
+  // mode in a query param.
+});
 
 // ============ Piece actions ============
 
