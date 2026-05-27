@@ -37,11 +37,20 @@ import boto3
 from botocore.client import Config
 
 
-ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "1107173d768105bad60ebb40ff28ef3d")
+ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "")
 ACCESS_KEY = os.environ.get("R2_ACCESS_KEY_ID", "")
 SECRET_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 BUCKET     = os.environ.get("R2_BUCKET", "mainfeed-content")
 PREFIX     = os.environ.get("R2_WEIGHTS_PREFIX", "models/").rstrip("/") + "/"
+
+if not (ACCOUNT_ID and ACCESS_KEY and SECRET_KEY):
+    sys.stderr.write(
+        "ERROR: R2_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY must be set.\n"
+        "Source them from your local r2 creds before running, e.g.:\n"
+        "    set -a; . /root/r2_creds.env; set +a\n"
+        "    python /root/mirror_weights_to_r2.py\n"
+    )
+    sys.exit(2)
 
 WEIGHTS_DIR  = Path(os.environ.get("WEIGHTS_DIR", "/workspace/ckpts"))
 DREAMIDV_DIR = Path(os.environ.get("DREAMIDV_DIR", "/root/dreamidv"))

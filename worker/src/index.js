@@ -2259,9 +2259,22 @@ async function handleSwapUpload(request, env, origin) {
     return errResp('invalid_content_type', 400, origin, { contentType });
   }
 
+  // Pre-check Content-Length so honest oversized clients get rejected
+  // BEFORE we read 100 MB of bandwidth/memory. Belt-and-braces: still
+  // re-check actual byteLength after read in case the header lies.
+  const MAX_BYTES = 100 * 1024 * 1024;
+  const clHeader = request.headers.get('Content-Length');
+  const declaredLen = clHeader != null ? parseInt(clHeader, 10) : null;
+  if (declaredLen != null && Number.isFinite(declaredLen) && declaredLen > MAX_BYTES) {
+    return errResp('body_too_large', 413, origin, {
+      hint: '100 MB max',
+      declared: declaredLen,
+    });
+  }
+
   const body = await request.arrayBuffer();
   if (body.byteLength === 0) return errResp('empty_body', 400, origin);
-  if (body.byteLength > 100 * 1024 * 1024) {
+  if (body.byteLength > MAX_BYTES) {
     return errResp('body_too_large', 413, origin, { hint: '100 MB max' });
   }
 
@@ -2408,9 +2421,13 @@ async function handleAdminDetectAppearance(request, env, origin) {
   try {
     return await _detectAppearanceInner(request, env, origin);
   } catch (err) {
+    // Log the stack server-side (visible via `wrangler tail`) so debugging
+    // still works, but DON'T return it in the response. Even though this is
+    // an admin-only endpoint, info-disclosure of internal paths/symbols is
+    // unnecessary — the response carries enough for the admin to react.
+    console.error('[detect-appearance] exception', err && err.stack ? err.stack : String(err));
     return errResp('detect_appearance_exception', 500, origin, {
       detail: String(err).slice(0, 600),
-      stack: (err && err.stack ? String(err.stack).slice(0, 800) : null),
     });
   }
 }

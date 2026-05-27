@@ -81,8 +81,9 @@ DWPOSE_DIR = DREAMIDV_DIR / "pose" / "models"
 # R2 (Cloudflare S3-compatible) — optional. If creds are present the pod
 # pulls weights from R2 mirror (~30s). Without creds it falls back to
 # HuggingFace (~6 min cold). Output upload no longer uses these creds —
-# see WORKER_UPLOAD_URL above.
-R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "1107173d768105bad60ebb40ff28ef3d")
+# see WORKER_UPLOAD_URL above. R2_ACCOUNT_ID is read from env (no longer
+# defaulted to a tenant-specific value baked into the source).
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET = os.environ.get("R2_BUCKET", "mainfeed-content")

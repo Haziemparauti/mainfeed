@@ -114,15 +114,17 @@ ENV WEIGHTS_DIR=/workspace/ckpts \
 # never inject a token with write access or access to other prefixes.
 ENV DREAMIDV_TORCH_COMPILE=default \
     HARDEN_WEIGHTS_R2=0 \
-    R2_ACCOUNT_ID=1107173d768105bad60ebb40ff28ef3d \
     R2_BUCKET=mainfeed-content \
     R2_OUTPUT_PREFIX=generated/ \
     R2_WEIGHTS_PREFIX=models/ \
     WORKER_UPLOAD_URL=https://api.mainfeed.app/api/swap/upload
 
-# Secret env vars (must be supplied at pod-spin time, NOT baked into image):
+# Tenant-specific env (must be supplied at pod-spin time, NOT baked into image):
 #   SWAP_POD_SECRET                                      — required (pod auths to worker)
-#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY               — OPTIONAL (only if HARDEN_WEIGHTS_R2=1)
+#   R2_ACCOUNT_ID                                        — required ONLY if HARDEN_WEIGHTS_R2=1
+#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY               — required ONLY if HARDEN_WEIGHTS_R2=1
+# (R2_ACCOUNT_ID is no longer baked into the image — keeps the image tenant-agnostic
+#  and avoids embedding the Cloudflare account identifier in a public GHCR layer.)
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s \
