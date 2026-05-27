@@ -164,7 +164,7 @@ echo "  R2 weight-mirror fast-path enabled (worker proxy, no R2 creds on pod)"
 for GPU_TYPE in "${GPU_FALLBACK[@]}"; do
   printf "  trying %-30s ... " "$GPU_TYPE"
   RESP=$(graphql "$(cat <<EOF
-{"query":"mutation { podFindAndDeployOnDemand(input: { cloudType: $CLOUD_TYPE, gpuCount: 1, volumeInGb: 0, containerDiskInGb: 60, gpuTypeId: \"$GPU_TYPE\", name: \"mainfeed-swap-$(date +%Y%m%d-%H%M)\", imageName: \"$POD_IMAGE\", ports: \"22/tcp,8000/http\", startSsh: true, env: [{key: \"PUBLIC_KEY\", value: \"$PUBLIC_KEY\"}, {key: \"SWAP_POD_SECRET\", value: \"$POD_SECRET\"}${EXTRA_ENV}] }) { id imageName desiredStatus } }"}
+{"query":"mutation { podFindAndDeployOnDemand(input: { cloudType: $CLOUD_TYPE, gpuCount: 1, volumeInGb: 0, containerDiskInGb: ${CONTAINER_DISK_GB:-100}, gpuTypeId: \"$GPU_TYPE\", name: \"mainfeed-swap-$(date +%Y%m%d-%H%M)\", imageName: \"$POD_IMAGE\", ports: \"22/tcp,8000/http\", startSsh: true, env: [{key: \"PUBLIC_KEY\", value: \"$PUBLIC_KEY\"}, {key: \"SWAP_POD_SECRET\", value: \"$POD_SECRET\"}${EXTRA_ENV}] }) { id imageName desiredStatus } }"}
 EOF
 )")
   POD_ID=$(echo "$RESP" | python -c "import json,sys; d=json.load(sys.stdin); p=(d.get('data',{}) or {}).get('podFindAndDeployOnDemand') or {}; print(p.get('id') or '')")
