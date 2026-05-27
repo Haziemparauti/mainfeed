@@ -1538,6 +1538,10 @@ export default {
     // Pod-upload: pod streams swap-output mp4 here (authed via SWAP_POD_SECRET). Worker writes
     // to R2 via binding so the pod never holds R2 creds (audit 2026-05-27).
     if (method === 'POST' && path === '/api/swap/upload') return handleSwapUpload(request, env, origin);
+    // Pod-weight-read: pod GETs weight files from r2://mainfeed-content/models/<...>
+    // via this proxy (authed via SWAP_POD_SECRET). Symmetric to /api/swap/upload —
+    // worker holds R2 access via env.CONTENT binding, pod never needs R2 creds.
+    if (method === 'GET' && path === '/api/pod/weight') return handlePodWeightRead(request, env, origin);
 
     // Admin: classify a selfie into one of the 40 hair+skin appearance buckets (Llama 3.2 Vision)
     if (method === 'POST' && path === '/api/admin/detect-appearance') return handleAdminDetectAppearance(request, env, origin);
@@ -2641,6 +2645,52 @@ async function handleSwapUpload(request, env, origin) {
     size: body.byteLength,
   }, {}, origin);
 }
+
+// GET /api/pod/weight?key=models/<...>
+// The pod fetches mirrored weight files (Flux base, AE, PuLID adapter,
+// antelopev2, DreamID-V, Wan-2.1, DWPose) via this proxy. Symmetric to
+// /api/swap/upload — auth via SWAP_POD_SECRET (already on pod), restricted
+// to the models/ prefix so a compromised pod can't read anywhere else in
+// the bucket. Stream-through: bytes never buffer in Worker memory.
+//
+// This is the pattern that keeps R2 credentials off the pod entirely
+// ([[feedback_no_secrets_on_pod]]) — same way /api/swap/upload removed
+// write creds, /api/pod/weight removes read creds.
+async function handlePodWeightRead(request, env, origin) {
+  if (!checkPodSecret(request, env)) return errResp('unauthorized', 401, origin);
+
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key') || '';
+  // Hard-restrict to models/ — pod must never use this proxy to read
+  // selfies, generated outputs, stock clips, or anything outside the mirror.
+  if (!key.startsWith('models/')) {
+    return errResp('invalid_key_prefix', 400, origin, {
+      hint: 'key must start with "models/" — pod weight reads are scoped to the mirror only',
+    });
+  }
+  if (key.includes('..') || key.includes('//')) {
+    return errResp('invalid_key', 400, origin, { key });
+  }
+
+  const obj = await env.CONTENT.get(key);
+  if (!obj) return errResp('not_found', 404, origin, { key });
+
+  // Stream-through: the worker doesn't hold the body in memory. R2 binding's
+  // .body is a ReadableStream and the Response constructor pipes it directly.
+  // For 24 GB flux1-schnell.safetensors this matters — no buffering possible.
+  const headers = new Headers({
+    'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
+    'Cache-Control': 'no-store',
+  });
+  if (obj.size != null) headers.set('Content-Length', String(obj.size));
+  if (obj.etag) headers.set('ETag', obj.etag);
+  // Manually add CORS — pod doesn't care about origin but be consistent.
+  const corsHeaders = cors(origin);
+  for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v);
+
+  return new Response(obj.body, { status: 200, headers });
+}
+
 
 // ============ Appearance-bucket detection (Llama 3.2 Vision) ============
 //

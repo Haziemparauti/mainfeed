@@ -53,16 +53,10 @@ SSH_KEY="$STOCK_DIR/runpod_ssh/id_ed25519"
 RUNPOD_API_KEY=$(< "$STOCK_DIR/runpod_key.txt")
 POD_SECRET=$(< "$STOCK_DIR/swap_pod_secret.txt")
 
-# R2 creds (optional since 2026-05-27 security refactor) — only needed if you
-# want the pod to pull weights from the R2 mirror at boot (fast: ~30s vs
-# HuggingFace's ~6 min). Output uploads now go through the worker proxy at
-# WORKER_UPLOAD_URL, so the pod no longer needs R2 write access. If you DO
-# inject R2 creds, scope them READ-ONLY to the models/ prefix only — never
-# give the pod broader access.
-# Plain `grep` avoids the Git-Bash + Windows-Python /c/... path-mangling issue.
-R2_ACCOUNT_ID=$(grep '^ACCOUNT_ID='        "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
-R2_ACCESS_KEY_ID=$(grep '^ACCESS_KEY_ID='  "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
-R2_SECRET_ACCESS_KEY=$(grep '^SECRET_ACCESS_KEY=' "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
+# R2 credentials are NOT loaded here on purpose. Per [[feedback_no_secrets_on_pod]]
+# the pod never holds R2 keys — both reads (weights) and writes (outputs) go
+# through worker proxy endpoints authed via SWAP_POD_SECRET. The r2_creds.txt
+# file is used ONLY by host-side tooling (mirror_flux_pulid_to_r2.py).
 
 # Cloud type selector. SECURE is the dev-mode flow (SSH bootstrap + SCP source
 # for live iteration). COMMUNITY is image-only: no SSH (PUBLIC_KEY env isn't
@@ -160,21 +154,12 @@ EXTRA_ENV=""
 [ -n "${FLUX_PULID_ENABLED:-}" ]  && EXTRA_ENV="$EXTRA_ENV, {key: \\\"FLUX_PULID_ENABLED\\\", value: \\\"$FLUX_PULID_ENABLED\\\"}"
 [ -n "${HF_TOKEN:-}" ]            && EXTRA_ENV="$EXTRA_ENV, {key: \\\"HF_TOKEN\\\", value: \\\"$HF_TOKEN\\\"}"
 
-# R2 fast-path: when ACCOUNT_ID + ACCESS_KEY_ID + SECRET_ACCESS_KEY are all
-# present, flip HARDEN_WEIGHTS_R2=1 and inject the creds into the deploy env.
-# pod/swap_server.py's ensure_weights() then pulls every weight file from
-# r2://mainfeed-content/models/ instead of HuggingFace (~30s cold boot vs
-# ~6-15 min on HF). Standing rule [[feedback_no_secrets_on_pod]]: the R2 token
-# MUST be read-only and scoped to mainfeed-content/models/* only — never
-# create a write-scoped or unscoped R2 token for a community pod (and ideally
-# not for SECURE pods either).
-if [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2_ACCESS_KEY_ID}" ] && [ -n "${R2_SECRET_ACCESS_KEY}" ]; then
-  EXTRA_ENV="$EXTRA_ENV, {key: \\\"HARDEN_WEIGHTS_R2\\\", value: \\\"1\\\"}"
-  EXTRA_ENV="$EXTRA_ENV, {key: \\\"R2_ACCOUNT_ID\\\", value: \\\"$R2_ACCOUNT_ID\\\"}"
-  EXTRA_ENV="$EXTRA_ENV, {key: \\\"R2_ACCESS_KEY_ID\\\", value: \\\"$R2_ACCESS_KEY_ID\\\"}"
-  EXTRA_ENV="$EXTRA_ENV, {key: \\\"R2_SECRET_ACCESS_KEY\\\", value: \\\"$R2_SECRET_ACCESS_KEY\\\"}"
-  echo "  ☞ R2 weight-mirror fast-path enabled (HARDEN_WEIGHTS_R2=1)"
-fi
+# R2 weight-mirror fast-path: HARDEN_WEIGHTS_R2=1 tells the pod to fetch
+# weights via the worker's /api/pod/weight proxy (bearer-authed via the
+# SWAP_POD_SECRET it already has) instead of HuggingFace. No R2 creds are
+# injected — the worker handles R2 access via its env.CONTENT binding.
+EXTRA_ENV="$EXTRA_ENV, {key: \\\"HARDEN_WEIGHTS_R2\\\", value: \\\"1\\\"}"
+echo "  R2 weight-mirror fast-path enabled (worker proxy, no R2 creds on pod)"
 
 for GPU_TYPE in "${GPU_FALLBACK[@]}"; do
   printf "  trying %-30s ... " "$GPU_TYPE"
@@ -231,7 +216,14 @@ echo "$POD_IP:$POD_PORT" > "$STOCK_DIR/runpod_pod_ssh.txt"
 # R2 creds) and the Dockerfile CMD auto-starts /root/swap_server.py with those
 # env vars at container start. The image must therefore be CURRENT — any local
 # pod/ edits not yet in the latest CI-built image won't be reflected.
-if [ "$CLOUD_TYPE" != "COMMUNITY" ]; then
+#
+# SKIP_SSH=1: act like COMMUNITY mode (no SSH bootstrap, no SCP) even on
+# SECURE hosts. Use this when the latest image already has everything needed
+# AND RunPod's SECURE SSH proxy is flaking out (Software caused connection
+# abort symptom — observed across 4090/A6000/3090 SECURE 2026-05-27 evening,
+# multiple consecutive deployments stalled). All env still passes via the
+# deploy env array so the container's CMD picks it up on first start.
+if [ "$CLOUD_TYPE" != "COMMUNITY" ] && [ "${SKIP_SSH:-0}" != "1" ]; then
 
 # ===== Step 3: wait for sshd to actually answer =====
 
@@ -355,8 +347,12 @@ sleep 2
 echo "  PID: $(pgrep -f swap_server.py | head -1)"
 REMOTE
 
-else  # CLOUD_TYPE == COMMUNITY
-  echo "▶ COMMUNITY mode: skipping SSH bootstrap (image runs swap_server.py via CMD; secrets injected via deploy env)"
+else
+  if [ "${SKIP_SSH:-0}" = "1" ]; then
+    echo "▶ SKIP_SSH=1: skipping SSH bootstrap (image-only path; secrets via deploy env)"
+  else
+    echo "▶ COMMUNITY mode: skipping SSH bootstrap (image runs swap_server.py via CMD; secrets injected via deploy env)"
+  fi
 fi  # end SECURE-only block
 
 # ===== Step 7: poll /health =====
