@@ -274,6 +274,7 @@ ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" 'mkdir -p /app/assets /workspace/ckp
 scp $SSH_OPTS -P "$POD_PORT" \
   "$REPO_ROOT/pod/swap_server.py" \
   "$REPO_ROOT/pod/dreamidv_runtime.py" \
+  "$REPO_ROOT/pod/flux_pulid_runtime.py" \
   "$REPO_ROOT/pod/render_overlay.py" \
   "$REPO_ROOT/pod/precompute_pose.py" \
   root@"$POD_IP":/root/

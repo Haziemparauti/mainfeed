@@ -105,13 +105,15 @@ COPY assets/Inter-Medium.ttf  /app/assets/Inter-Medium.ttf
 COPY assets/logo-square2.svg  /app/assets/logo-square2.svg
 
 # === Server code ===
-# swap_server.py imports dreamidv_runtime at startup — both must ship.
-# render_overlay.py burns caption + watermark into each MP4 (caption Anton,
-# watermark Inter Medium per pod/render_overlay.py).
-COPY swap_server.py      /root/swap_server.py
-COPY dreamidv_runtime.py /root/dreamidv_runtime.py
-COPY render_overlay.py   /root/render_overlay.py
-COPY precompute_pose.py  /root/precompute_pose.py
+# swap_server.py imports dreamidv_runtime + flux_pulid_runtime at startup —
+# all three must ship. render_overlay.py burns caption + watermark into each
+# MP4 (caption Anton, watermark Inter Medium per pod/render_overlay.py) and
+# brand_image() composes the same watermark onto Flux+PuLID JPEGs.
+COPY swap_server.py        /root/swap_server.py
+COPY dreamidv_runtime.py   /root/dreamidv_runtime.py
+COPY flux_pulid_runtime.py /root/flux_pulid_runtime.py
+COPY render_overlay.py     /root/render_overlay.py
+COPY precompute_pose.py    /root/precompute_pose.py
 
 # === Workspace for weights + temp inference files (mounted as volume in prod) ===
 RUN mkdir -p /workspace/ckpts/dreamidv /workspace/ckpts/wan2.1 /workspace/ckpts/dwpose /workspace/tmp
