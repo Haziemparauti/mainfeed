@@ -60,7 +60,8 @@ POD_SECRET=$(< "$STOCK_DIR/swap_pod_secret.txt")
 # inject R2 creds, scope them READ-ONLY to the models/ prefix only — never
 # give the pod broader access.
 # Plain `grep` avoids the Git-Bash + Windows-Python /c/... path-mangling issue.
-R2_ACCESS_KEY_ID=$(grep '^ACCESS_KEY_ID=' "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
+R2_ACCOUNT_ID=$(grep '^ACCOUNT_ID='        "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
+R2_ACCESS_KEY_ID=$(grep '^ACCESS_KEY_ID='  "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
 R2_SECRET_ACCESS_KEY=$(grep '^SECRET_ACCESS_KEY=' "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
 
 # Cloud type selector. SECURE is the dev-mode flow (SSH bootstrap + SCP source
@@ -158,6 +159,22 @@ EXTRA_ENV=""
 [ -n "${DREAMIDV_ENABLED:-}" ]    && EXTRA_ENV="$EXTRA_ENV, {key: \\\"DREAMIDV_ENABLED\\\", value: \\\"$DREAMIDV_ENABLED\\\"}"
 [ -n "${FLUX_PULID_ENABLED:-}" ]  && EXTRA_ENV="$EXTRA_ENV, {key: \\\"FLUX_PULID_ENABLED\\\", value: \\\"$FLUX_PULID_ENABLED\\\"}"
 [ -n "${HF_TOKEN:-}" ]            && EXTRA_ENV="$EXTRA_ENV, {key: \\\"HF_TOKEN\\\", value: \\\"$HF_TOKEN\\\"}"
+
+# R2 fast-path: when ACCOUNT_ID + ACCESS_KEY_ID + SECRET_ACCESS_KEY are all
+# present, flip HARDEN_WEIGHTS_R2=1 and inject the creds into the deploy env.
+# pod/swap_server.py's ensure_weights() then pulls every weight file from
+# r2://mainfeed-content/models/ instead of HuggingFace (~30s cold boot vs
+# ~6-15 min on HF). Standing rule [[feedback_no_secrets_on_pod]]: the R2 token
+# MUST be read-only and scoped to mainfeed-content/models/* only — never
+# create a write-scoped or unscoped R2 token for a community pod (and ideally
+# not for SECURE pods either).
+if [ -n "${R2_ACCOUNT_ID}" ] && [ -n "${R2_ACCESS_KEY_ID}" ] && [ -n "${R2_SECRET_ACCESS_KEY}" ]; then
+  EXTRA_ENV="$EXTRA_ENV, {key: \\\"HARDEN_WEIGHTS_R2\\\", value: \\\"1\\\"}"
+  EXTRA_ENV="$EXTRA_ENV, {key: \\\"R2_ACCOUNT_ID\\\", value: \\\"$R2_ACCOUNT_ID\\\"}"
+  EXTRA_ENV="$EXTRA_ENV, {key: \\\"R2_ACCESS_KEY_ID\\\", value: \\\"$R2_ACCESS_KEY_ID\\\"}"
+  EXTRA_ENV="$EXTRA_ENV, {key: \\\"R2_SECRET_ACCESS_KEY\\\", value: \\\"$R2_SECRET_ACCESS_KEY\\\"}"
+  echo "  ☞ R2 weight-mirror fast-path enabled (HARDEN_WEIGHTS_R2=1)"
+fi
 
 for GPU_TYPE in "${GPU_FALLBACK[@]}"; do
   printf "  trying %-30s ... " "$GPU_TYPE"

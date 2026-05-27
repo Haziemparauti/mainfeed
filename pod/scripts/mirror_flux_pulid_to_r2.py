@@ -8,46 +8,48 @@ gate is in the cold-boot critical path).
 Parallel companion to `mirror_weights_to_r2.py` (which runs ON a pod for
 DreamID-V + Wan-2.1 + DWPose mirror). This one runs on the HOST because:
   - HF token for the gated FLUX.1-schnell repo lives at $STOCK_DIR/hf_token.txt
-  - R2 writes go through `wrangler r2 object put` (Cloudflare session auth,
-    no S3-compat keys needed), keeping us aligned with [[feedback_no_secrets_on_pod]]
-    — the revoked R2 token never comes back, even for this one-time mirror.
+  - R2 write creds (S3-compatible) live at $STOCK_DIR/r2_creds.txt — a
+    short-lived WRITE-scoped token the user generated solely for this mirror
+    and should revoke after. After mirror is done, the pod uses a separate
+    READ-ONLY token (or none at all if HF_TOKEN is set instead).
 
 Sequence:
   1. huggingface_hub.hf_hub_download → $CACHE_DIR/<filename>
-  2. wrangler r2 object put mainfeed-content/models/flux_pulid/<filename>
+  2. boto3 upload_file → r2://mainfeed-content/models/flux_pulid/<filename>
+     (boto3 handles multipart automatically for files > 8 MB; no 300 MiB
+     cap like wrangler r2 object put)
 
 Idempotent at both layers: HF download is HF-cache-aware (no re-download on
 repeat runs), and R2 upload skips files that already match size at the
 destination key.
 
-Usage:
-    HF_TOKEN=$(< /c/Users/cex/Desktop/mainfeed-stock/hf_token.txt) \\
-      python pod/scripts/mirror_flux_pulid_to_r2.py
-
-Or just run from the repo root — script auto-loads HF_TOKEN from the standard
-mainfeed-stock path if env is empty:
-
+Usage (from repo root):
     python pod/scripts/mirror_flux_pulid_to_r2.py
 
-Bytes: ~25 GB.  Wall-time on a decent home connection: 15-30 min.
+Auto-loads HF_TOKEN from $STOCK_DIR/hf_token.txt and R2 creds from
+$STOCK_DIR/r2_creds.txt (ACCOUNT_ID + ACCESS_KEY_ID + SECRET_ACCESS_KEY).
+
+Bytes: ~25 GB.  Wall-time on a decent home connection: 15-30 min (download
+dominates; boto3 multipart maxes out the upload pipe).
 R2 storage cost: ~$0.38/mo at $0.015/GB.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
+
+import boto3
+from boto3.s3.transfer import TransferConfig
+from botocore.client import Config as BotoConfig
 
 # ============ config ============
 
 STOCK_DIR = Path(os.environ.get("STOCK_DIR", r"C:\Users\cex\Desktop\mainfeed-stock"))
 CACHE_DIR = Path(os.environ.get("FLUX_MIRROR_CACHE",
                                 str(STOCK_DIR / "flux_pulid_cache")))
-WORKER_DIR = Path(__file__).resolve().parent.parent.parent / "worker"
 
 R2_BUCKET = os.environ.get("R2_BUCKET", "mainfeed-content")
 R2_PREFIX = os.environ.get("R2_WEIGHTS_PREFIX", "models/").rstrip("/") + "/"
@@ -61,6 +63,29 @@ if not HF_TOKEN:
         "ERROR: HF_TOKEN not found in env or at $STOCK_DIR/hf_token.txt.\n"
         "FLUX.1-schnell is gated — see [[mainfeed_flux_schnell_gated_on_hf]]\n"
         "for the one-time HF terms acceptance + read-token creation steps.\n"
+    )
+    sys.exit(2)
+
+
+# Load R2 S3-compat creds from $STOCK_DIR/r2_creds.txt (KEY=value lines).
+R2_CREDS = {}
+_creds_path = STOCK_DIR / "r2_creds.txt"
+if _creds_path.exists():
+    for line in _creds_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        R2_CREDS[k.strip()] = v.strip()
+
+R2_ACCOUNT_ID        = os.environ.get("R2_ACCOUNT_ID", R2_CREDS.get("ACCOUNT_ID", ""))
+R2_ACCESS_KEY_ID     = os.environ.get("R2_ACCESS_KEY_ID", R2_CREDS.get("ACCESS_KEY_ID", ""))
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", R2_CREDS.get("SECRET_ACCESS_KEY", ""))
+
+if not (R2_ACCOUNT_ID and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY):
+    sys.stderr.write(
+        "ERROR: R2 creds incomplete. Need ACCOUNT_ID + ACCESS_KEY_ID + SECRET_ACCESS_KEY\n"
+        f"in $STOCK_DIR/r2_creds.txt (currently at: {_creds_path})\n"
     )
     sys.exit(2)
 
@@ -99,22 +124,40 @@ MIRROR = [
 ]
 
 
+# ============ R2 client ============
+
+S3 = boto3.client(
+    "s3",
+    endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+    aws_access_key_id=R2_ACCESS_KEY_ID,
+    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+    config=BotoConfig(signature_version="s3v4"),
+    region_name="auto",
+)
+
+# boto3 multipart config:
+#   multipart_threshold: switch to multipart for files larger than this
+#   multipart_chunksize: each part size (must be 5 MB minimum, except last)
+#   max_concurrency: parallel part uploads — bumps throughput on home connections
+# R2 limit: 10,000 parts per upload. With 100 MB parts that supports up to 1 TB
+# per file. flux1-schnell at 24 GB needs ~240 parts — comfortable headroom.
+TRANSFER_CFG = TransferConfig(
+    multipart_threshold=8 * 1024 * 1024,
+    multipart_chunksize=100 * 1024 * 1024,
+    max_concurrency=4,
+    use_threads=True,
+)
+
+
 # ============ helpers ============
 
-def wrangler(*args, capture=False) -> subprocess.CompletedProcess:
-    """Invoke npx wrangler from the worker/ dir so it picks up wrangler.toml."""
-    cmd = ["npx.cmd" if os.name == "nt" else "npx", "--yes", "wrangler", *args]
-    return subprocess.run(
-        cmd, cwd=str(WORKER_DIR), check=False,
-        capture_output=capture, text=capture,
-    )
-
-
-# NB: wrangler 4.x has no `r2 object info` / list — there's no cheap way
-# to ask "does this key already exist at the right size?" from the host.
-# We rely on HF's cache being canonical (skip re-download) and let wrangler
-# overwrite on the R2 side. Re-runs are safe (overwrite is idempotent) but
-# pay the upload bandwidth cost each time. For a one-time mirror that's OK.
+def r2_object_size(key: str) -> int | None:
+    """Return the byte-size of an R2 object, or None if it doesn't exist."""
+    try:
+        head = S3.head_object(Bucket=R2_BUCKET, Key=key)
+        return head.get("ContentLength")
+    except Exception:
+        return None
 
 
 def hf_download(hf_repo: str, hf_filename: str, local_dir: Path) -> Path:
@@ -133,18 +176,18 @@ def hf_download(hf_repo: str, hf_filename: str, local_dir: Path) -> Path:
 
 
 def r2_put(local: Path, key: str, content_type: str = "application/octet-stream") -> None:
-    """Stream a local file to R2 via wrangler. wrangler handles multipart
-    chunking transparently for files > 5 GB."""
+    """Upload a local file to R2 via boto3 (multipart for files > 8 MB).
+    Streams from disk so 24 GB files don't blow up memory."""
     full_key = f"{R2_BUCKET}/{key}"
-    print(f"  PUT  {full_key} ({local.stat().st_size:,} bytes)", flush=True)
-    res = wrangler(
-        "r2", "object", "put", full_key,
-        "--file", str(local),
-        "--content-type", content_type,
-        "--remote",
+    sz = local.stat().st_size
+    print(f"  PUT  {full_key} ({sz:,} bytes, ~{sz / 1e9:.2f} GB)", flush=True)
+    S3.upload_file(
+        Filename=str(local),
+        Bucket=R2_BUCKET,
+        Key=key,
+        ExtraArgs={"ContentType": content_type},
+        Config=TRANSFER_CFG,
     )
-    if res.returncode != 0:
-        raise RuntimeError(f"wrangler r2 put failed (exit {res.returncode})")
 
 
 # ============ main ============
@@ -155,27 +198,41 @@ def main() -> int:
     print(f"Manifest:         {len(MIRROR)} files")
     print()
 
-    uploaded, total_uploaded_bytes = 0, 0
+    skipped, uploaded, total_uploaded_bytes = 0, 0, 0
     t_total = time.time()
 
     for hf_repo, hf_filename, rel_key in MIRROR:
         full_key = R2_PREFIX + rel_key
         print(f"=== {rel_key} ===")
 
+        # Fast path: HEAD R2 first. If already mirrored at any non-zero size,
+        # skip re-downloading from HF too (saves 24 GB of HF bandwidth on
+        # idempotent re-runs).
+        r2_size_before = r2_object_size(full_key)
+
         # Step 1: download from HF into local cache (HF-aware caching).
         try:
             local_path = hf_download(hf_repo, hf_filename, CACHE_DIR)
         except Exception as e:
-            sys.stderr.write(f"HF download FAILED for {hf_repo}:{hf_filename} — {e}\n")
+            sys.stderr.write(f"HF download FAILED for {hf_repo}:{hf_filename} - {e}\n")
             return 3
         local_size = local_path.stat().st_size
 
-        # Step 2: upload via wrangler (overwrite is idempotent).
+        # Step 2: skip upload if R2 already has it at matching size.
+        if r2_size_before == local_size:
+            print(f"  ok already in R2 at matching size ({local_size:,} bytes), skipping upload")
+            skipped += 1
+            print()
+            continue
+        if r2_size_before is not None:
+            print(f"  ! R2 has {r2_size_before:,} bytes, local is {local_size:,} - re-uploading")
+
+        # Step 3: upload via boto3 (multipart automatic for >8 MB).
         t_up = time.time()
         try:
             r2_put(local_path, full_key)
         except Exception as e:
-            sys.stderr.write(f"R2 upload FAILED for {full_key} — {e}\n")
+            sys.stderr.write(f"R2 upload FAILED for {full_key} - {e}\n")
             return 4
         el = time.time() - t_up
         rate = (local_size / 1e6) / max(el, 0.001)
@@ -187,6 +244,7 @@ def main() -> int:
     el_total = time.time() - t_total
     print()
     print(f"=== DONE ===")
+    print(f"  skipped:  {skipped} files already in R2 at matching size")
     print(f"  uploaded: {uploaded} files = {total_uploaded_bytes / 1e9:.2f} GB")
     print(f"  total:    {el_total:.1f}s wall-time")
     return 0

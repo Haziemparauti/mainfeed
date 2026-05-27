@@ -1529,6 +1529,10 @@ export default {
     if (method === 'POST' && path === '/api/admin/swap/queue') return handleAdminSwapQueue(request, env, origin);
     // Admin: queue a Flux+PuLID cosplay-image generation (10/day quota, see [[mainfeed_image_library_architecture]])
     if (method === 'POST' && path === '/api/admin/image/queue') return handleAdminImageQueue(request, env, origin);
+    // Admin: one-shot HF -> R2 mirror via the worker's env.CONTENT binding.
+    // Bypasses wrangler r2 object put's 300 MiB cap (we needed this for the
+    // Flux+PuLID weight mirror — flux1-schnell.safetensors is 24 GB).
+    if (method === 'POST' && path === '/api/admin/mirror-hf-to-r2') return handleAdminMirrorHfToR2(request, env, origin);
     // Pod-callback: pod posts here when a swap completes/fails (authed via SWAP_POD_SECRET, not ADMIN_TOKEN)
     if (method === 'POST' && path === '/api/swap/complete') return handleSwapComplete(request, env, origin);
     // Pod-upload: pod streams swap-output mp4 here (authed via SWAP_POD_SECRET). Worker writes
@@ -2396,6 +2400,96 @@ async function pickImageTemplateAndPrompt(env, userId, appearanceBucket, explici
   }
 
   return null;
+}
+
+
+// POST /api/admin/mirror-hf-to-r2
+// One-shot streaming mirror: fetch a HuggingFace file (optionally gated, with
+// HF_TOKEN auth) and write it to R2 via the env.CONTENT binding. Workers'
+// fetch->R2 path has no 300 MiB cap (unlike `wrangler r2 object put` from the
+// host machine). Streaming happens entirely on Cloudflare's network — bytes
+// never come back to the caller.
+//
+// Used to mirror Flux.1-schnell + AE + PuLID adapter weights to our R2 bucket
+// for the gating-insulated cold-boot path (see [[mainfeed_flux_schnell_gated_on_hf]]
+// and [[mainfeed_image_library_architecture]]).
+//
+// Body (JSON): {
+//   hf_repo:     "black-forest-labs/FLUX.1-schnell"   (required)
+//   hf_filename: "flux1-schnell.safetensors"         (required)
+//   hf_token:    "hf_..."                            (required for gated repos)
+//   r2_key:      "models/flux_pulid/flux1-schnell.safetensors" (required, must start with "models/")
+// }
+//
+// Auth: Authorization: Bearer ${ADMIN_TOKEN}
+async function handleAdminMirrorHfToR2(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+
+  const body = await request.json().catch(() => ({}));
+  const hfRepo     = String(body.hf_repo || '').trim();
+  const hfFilename = String(body.hf_filename || '').trim();
+  const hfToken    = String(body.hf_token || '').trim();
+  const r2Key      = String(body.r2_key || '').trim();
+
+  if (!hfRepo || !hfFilename) return errResp('missing_hf_target', 400, origin);
+  if (!r2Key) return errResp('missing_r2_key', 400, origin);
+  // Hard-restrict to models/ — keeps this admin tool from being abused to
+  // write outside the models prefix (e.g. clobber generated/ or stock/).
+  if (!r2Key.startsWith('models/')) {
+    return errResp('r2_key_must_start_with_models', 400, origin, { r2_key: r2Key });
+  }
+  if (r2Key.includes('..') || r2Key.includes('//')) {
+    return errResp('invalid_r2_key', 400, origin, { r2_key: r2Key });
+  }
+
+  const hfUrl = `https://huggingface.co/${hfRepo}/resolve/main/${hfFilename}`;
+  const headers = {};
+  if (hfToken) headers['Authorization'] = `Bearer ${hfToken}`;
+
+  const t0 = Date.now();
+  let upstream;
+  try {
+    upstream = await fetch(hfUrl, { headers, redirect: 'follow' });
+  } catch (err) {
+    return errResp('hf_fetch_failed', 502, origin, { detail: String(err).slice(0, 400) });
+  }
+
+  if (!upstream.ok) {
+    const errText = await upstream.text().catch(() => '');
+    return errResp(`hf_${upstream.status}`, 502, origin, {
+      hf_url: hfUrl,
+      hf_body: errText.slice(0, 400),
+      hint: upstream.status === 401 ? 'gated repo — pass a hf_token that has accepted the repo terms' : undefined,
+    });
+  }
+
+  if (!upstream.body) {
+    return errResp('hf_no_body', 502, origin);
+  }
+
+  const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+  const contentLength = upstream.headers.get('content-length');
+
+  // env.CONTENT.put accepts a ReadableStream — bytes stream through the Worker
+  // edge directly to R2 storage without buffering the full body in memory.
+  // For multi-GB files (flux1-schnell.safetensors is 24 GB) this is the only
+  // viable path inside a Worker.
+  try {
+    await env.CONTENT.put(r2Key, upstream.body, {
+      httpMetadata: { contentType },
+    });
+  } catch (err) {
+    return errResp('r2_put_failed', 500, origin, { detail: String(err).slice(0, 400) });
+  }
+
+  const elapsedMs = Date.now() - t0;
+  return json({
+    ok: true,
+    r2_bucket: 'mainfeed-content',
+    r2_key: r2Key,
+    content_length: contentLength,
+    elapsed_ms: elapsedMs,
+  }, {}, origin);
 }
 
 
