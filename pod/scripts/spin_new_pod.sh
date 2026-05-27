@@ -255,10 +255,10 @@ SWAP_POD_SECRET=$POD_SECRET
 WEIGHTS_DIR=/workspace/ckpts
 DREAMIDV_DIR=/root/dreamidv
 DEBUG_KEEP_WORKDIR=1
-# torch.compile mode for the DiT — measured 2026-05-26: "default" gives a
-# steady ~10% speedup over eager with no quality regression. Set to "0" to
-# fall back to eager if this ever breaks. reduce-overhead tested + rejected
-# (CUDA graphs silently skipped on DreamID-V's CPU-tensor scheduler inputs).
+# torch.compile mode for the DiT — measured 2026-05-27 night (clean
+# steady-state re-test): "default" gives +14% over eager (4.10 vs 4.78 s/it),
+# no quality regression. max-autotune CRASHES 2nd swap, reduce-overhead silently
+# falls back to default — compile-time ceiling is +14%. Set to "0" for eager fallback.
 DREAMIDV_TORCH_COMPILE=default
 ENV
 chmod 600 /root/pod_env.sh

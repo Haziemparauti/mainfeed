@@ -300,7 +300,8 @@ async def run_dreamidv(workdir: Path, src_image: Path, ref_video: Path,
     output = workdir / "output.mp4"
 
     # frame_num=None → fall back to DreamID-V's default of 81. The worker
-    # now always sends 120 (5s @ 24fps) but we keep the optional path.
+    # sends 81 (3s @ 24fps, locked spec); we keep the optional path for
+    # one-off longer-clip tests.
     kwargs = dict(
         src_image=str(src_image),
         ref_video=str(ref_video),

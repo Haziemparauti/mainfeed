@@ -133,17 +133,21 @@ def init(weights_dir: str, dreamidv_dir: str, task: str = "swapface",
     )
 
     # OPTIONAL: torch.compile the DiT for diffusion-time speedup.
-    # Gated behind DREAMIDV_TORCH_COMPILE=1 so we can A/B without code changes.
+    # Gated behind DREAMIDV_TORCH_COMPILE env var so we can A/B without code changes.
     # First swap after compile-on pays ~30-60s compile cost; subsequent swaps
-    # use cached graph and run 1.2-2× faster (target: ~150-180s instead of 218s).
-    # `fullgraph=False` allows graph breaks for flash_attn / custom kernels.
-    # 2026-05-26 evening experiment.
+    # use cached graph at steady-state speedup. `fullgraph=False` allows graph
+    # breaks for flash_attn / custom kernels.
     import torch as _torch
-    # DREAMIDV_TORCH_COMPILE env var values:
-    #   "0" (default) → eager mode, no compile (safest fallback)
-    #   "1" / "default" → torch.compile(mode="default") — measured ~10% speedup
-    #   "reduce-overhead" → CUDA graphs, expected +15-25% on top of default
-    #   "max-autotune" → most aggressive search, longest compile time
+    # DREAMIDV_TORCH_COMPILE env var values (validated 2026-05-27 night, clean
+    # steady-state per-iter measurement at frame_num=81):
+    #   "0" (default) → eager mode, 4.78 s/it. Safest fallback only.
+    #   "1" / "default" → torch.compile(mode="default") — 4.10 s/it = +14%. LOCKED PRODUCTION.
+    #   "reduce-overhead" → CUDA graphs requested but silently skipped on our
+    #       codebase (per-swap noise tensor allocation invalidates graphs).
+    #       Ends up same as "default" — do not use.
+    #   "max-autotune" → CRASHES on 2nd swap with "static input data pointer
+    #       changed" (CUDA graph + per-swap tensor allocation incompatible). DEAD.
+    # See [[mainfeed_optimization_test_results_2026-05-27]] for full test pass.
     # Rollback strategy: set to "0" and restart server.
     _compile_flag = os.environ.get("DREAMIDV_TORCH_COMPILE", "0").lower()
     _compile_mode = None

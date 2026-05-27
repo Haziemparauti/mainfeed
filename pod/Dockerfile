@@ -90,9 +90,12 @@ ENV WEIGHTS_DIR=/workspace/ckpts \
     OUTPUT_DIR=/workspace/tmp \
     PORT=8000
 
-# Production-default optimizations validated 2026-05-26:
-#   DREAMIDV_TORCH_COMPILE=default → +10% diffusion speedup vs eager,
-#     visually identical output, locked in production.
+# Production-default optimizations validated 2026-05-27 (clean steady-state
+# re-measurement; supersedes the 2026-05-26 +10% figure that folded in compile cost):
+#   DREAMIDV_TORCH_COMPILE=default → +14% diffusion speedup vs eager
+#     (4.10 vs 4.78 s/it at frame_num=81), visually identical output, locked.
+#     max-autotune / reduce-overhead are DEAD (CUDA graphs incompatible with
+#     our per-swap noise tensor allocation). Compile-time ceiling reached.
 #   HARDEN_WEIGHTS_R2=1 → ensure_weights() pulls from R2 mirror (~30s, fast)
 #     instead of HuggingFace (~6 min, slow), per pod/README.md.
 # These can be overridden at container/pod-spin time if a future test needs
