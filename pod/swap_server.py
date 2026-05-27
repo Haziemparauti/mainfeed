@@ -195,31 +195,46 @@ class ImageRequest(BaseModel):
 
 # Weight manifest — used by both R2 and HF paths.
 # Each entry: (local_path, r2_key, hf_repo_or_None, hf_filename_or_None)
-# Entries with hf_repo=None are pulled by snapshot_download in a bundle
-# (the runtime resolves which bundle by inspecting the local path).
+# Filtered at runtime so DREAMIDV_ENABLED=0 pods don't waste cold-boot time
+# downloading 17 GB of DreamID-V/Wan-2.1 weights they'll never use, and
+# FLUX_PULID_ENABLED=0 pods skip the 26 GB Flux weight set.
 def _weight_manifest():
+    dreamidv_on = os.environ.get("DREAMIDV_ENABLED", "1") == "1"
+    flux_on     = os.environ.get("FLUX_PULID_ENABLED", "1") == "1"
+
+    entries = []
+    if dreamidv_on:
+        entries.extend([
+            # === DreamID-V (video swap engine) ===
+            (DREAMIDV_FASTER_CKPT,
+             f"{R2_WEIGHTS_PREFIX}dreamidv_faster.pth",
+             "XuGuo699/DreamID-V", "dreamidv_faster.pth"),
+            (DWPOSE_DIR / "dw-ll_ucoco_384.onnx",
+             f"{R2_WEIGHTS_PREFIX}dwpose/dw-ll_ucoco_384.onnx",
+             "XuGuo699/DreamID-V", "dw-ll_ucoco_384.onnx"),
+            (DWPOSE_DIR / "yolox_l.onnx",
+             f"{R2_WEIGHTS_PREFIX}dwpose/yolox_l.onnx",
+             "XuGuo699/DreamID-V", "yolox_l.onnx"),
+            # === Wan-2.1 (base diffusion model for DreamID-V) ===
+            # Pulled as a snapshot_download bundle (hf_repo=None signals bundle).
+            (WAN21_DIR / "Wan2.1_VAE.pth",
+             f"{R2_WEIGHTS_PREFIX}wan2.1/Wan2.1_VAE.pth",
+             None, None),
+            (WAN21_DIR / "models_t5_umt5-xxl-enc-bf16.pth",
+             f"{R2_WEIGHTS_PREFIX}wan2.1/models_t5_umt5-xxl-enc-bf16.pth",
+             None, None),
+            (WAN21_DIR / "diffusion_pytorch_model.safetensors",
+             f"{R2_WEIGHTS_PREFIX}wan2.1/diffusion_pytorch_model.safetensors",
+             None, None),
+        ])
+
+    if flux_on:
+        entries.extend(_flux_pulid_manifest_entries())
+    return entries
+
+
+def _flux_pulid_manifest_entries():
     return [
-        # === DreamID-V (video swap engine) ===
-        (DREAMIDV_FASTER_CKPT,
-         f"{R2_WEIGHTS_PREFIX}dreamidv_faster.pth",
-         "XuGuo699/DreamID-V", "dreamidv_faster.pth"),
-        (DWPOSE_DIR / "dw-ll_ucoco_384.onnx",
-         f"{R2_WEIGHTS_PREFIX}dwpose/dw-ll_ucoco_384.onnx",
-         "XuGuo699/DreamID-V", "dw-ll_ucoco_384.onnx"),
-        (DWPOSE_DIR / "yolox_l.onnx",
-         f"{R2_WEIGHTS_PREFIX}dwpose/yolox_l.onnx",
-         "XuGuo699/DreamID-V", "yolox_l.onnx"),
-        # === Wan-2.1 (base diffusion model for DreamID-V) ===
-        # Pulled as a snapshot_download bundle (hf_repo=None signals bundle).
-        (WAN21_DIR / "Wan2.1_VAE.pth",
-         f"{R2_WEIGHTS_PREFIX}wan2.1/Wan2.1_VAE.pth",
-         None, None),
-        (WAN21_DIR / "models_t5_umt5-xxl-enc-bf16.pth",
-         f"{R2_WEIGHTS_PREFIX}wan2.1/models_t5_umt5-xxl-enc-bf16.pth",
-         None, None),
-        (WAN21_DIR / "diffusion_pytorch_model.safetensors",
-         f"{R2_WEIGHTS_PREFIX}wan2.1/diffusion_pytorch_model.safetensors",
-         None, None),
         # === Flux.1-schnell base model (~24 GB) ===
         # Apache 2.0. Single safetensors file (NOT diffusers-format bundle —
         # PuLID's flux/util.py uses its own custom loader, not FluxPipeline).
