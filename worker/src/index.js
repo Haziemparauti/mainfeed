@@ -1527,6 +1527,8 @@ export default {
 
     // Admin: queue a DreamID-V swap on the RunPod pod (proxies to swap_server.py /swap)
     if (method === 'POST' && path === '/api/admin/swap/queue') return handleAdminSwapQueue(request, env, origin);
+    // Admin: queue a Flux+PuLID cosplay-image generation (10/day quota, see [[mainfeed_image_library_architecture]])
+    if (method === 'POST' && path === '/api/admin/image/queue') return handleAdminImageQueue(request, env, origin);
     // Pod-callback: pod posts here when a swap completes/fails (authed via SWAP_POD_SECRET, not ADMIN_TOKEN)
     if (method === 'POST' && path === '/api/swap/complete') return handleSwapComplete(request, env, origin);
     // Pod-upload: pod streams swap-output mp4 here (authed via SWAP_POD_SECRET). Worker writes
@@ -2152,6 +2154,251 @@ async function handleAdminSwapQueue(request, env, origin) {
   }, {}, origin);
 }
 
+// POST /api/admin/image/queue
+// Body (JSON): {
+//   user_id:           string (required — image is attached to a real user)
+//   template_id?:      string (optional — if omitted, Layer A picks an unseen template)
+//   prompt_override?:  string (optional — bypass template, use this exact prompt; for one-off tests)
+//   request_id?:       string (auto-generated if missing)
+//   base_seed?:        int (default 42)
+//   id_weight?:        float (default 1.0 — PuLID identity injection strength)
+//   start_step?:       int (default 0 — denoise step to begin ID injection)
+//   num_steps?:        int (default 4 — Flux.1-schnell turbo)
+// }
+//
+// Layer A uniqueness query: prefers templates this user has never seen.
+// Within the chosen template, slot values are filled with RANDOM picks; the
+// filled prompt is then checked against (user_id, image_template_id,
+// generation_prompt) — if it collides we re-roll up to 5 times before giving
+// up (extremely unlikely in practice, see [[mainfeed_uniqueness_guarantee]]
+// for the math).
+//
+// Flow: pick template + slots → fill prompt → INSERT pending piece →
+// stage user's selfie as a public temp file (keyed by piece_id, same pattern
+// as the welcome-video swap) → POST to pod /image → pod callbacks
+// /api/swap/complete with status='completed' + r2_key on success.
+async function handleAdminImageQueue(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  if (!env.SWAP_POD_URL) return errResp('swap_pod_url_not_set', 500, origin, {
+    hint: 'wrangler secret put SWAP_POD_URL  (e.g. https://<podid>-8000.proxy.runpod.net)',
+  });
+  if (!env.SWAP_POD_SECRET) return errResp('swap_pod_secret_not_set', 500, origin);
+
+  const body = await request.json().catch(() => ({}));
+  const userId = String(body.user_id || '').trim();
+  if (!userId) return errResp('missing_user_id', 400, origin);
+
+  // Fetch user — need appearance_bucket (for {bucket_phrase}) and the primary
+  // selfie key (the PuLID identity source).
+  const userRow = await env.DB.prepare(
+    `SELECT id, handle, appearance_bucket, primary_selfie_r2_key
+       FROM users WHERE id = ? AND deleted_at IS NULL`
+  ).bind(userId).first();
+  if (!userRow) return errResp('user_not_found', 404, origin, { user_id: userId });
+  if (!userRow.primary_selfie_r2_key) return errResp('user_no_selfie', 400, origin, {
+    hint: 'user has no primary_selfie_r2_key — they must complete signup before images can be generated',
+  });
+
+  // === Pick template + fill slots ===
+  let template, filledPrompt;
+  if (typeof body.prompt_override === 'string' && body.prompt_override.trim().length > 0) {
+    // One-off test path — no template, just use the supplied prompt verbatim.
+    template = null;
+    filledPrompt = String(body.prompt_override).slice(0, 2000);
+  } else {
+    const explicitTemplateId = typeof body.template_id === 'string' ? body.template_id : null;
+    const picked = await pickImageTemplateAndPrompt(env, userId, userRow.appearance_bucket, explicitTemplateId);
+    if (!picked) return errResp('no_template_available', 503, origin, {
+      hint: 'no unseen template+slot combination for this user (full exhaustion) — Layer B fallback not yet implemented',
+    });
+    template = picked.template;
+    filledPrompt = picked.filledPrompt;
+  }
+
+  const requestId = String(body.request_id || crypto.randomUUID());
+
+  // Refuse to clobber an existing piece.
+  const existing = await env.DB.prepare('SELECT id FROM generated_pieces WHERE id = ?').bind(requestId).first();
+  if (existing) return errResp('request_id_collision', 409, origin);
+
+  const pieceId = requestId;
+  const r2Key = `generated/${pieceId}.jpg`;
+
+  // Stage selfie as a temp public file the pod can fetch over plain HTTPS.
+  // Same pattern as generateWelcomeVideoSwap: keyed by piece_id (UUID), not
+  // user_id, so the URL isn't bruteforceable from log-leaked user_ids.
+  const sel = await env.SELFIES.get(userRow.primary_selfie_r2_key);
+  if (!sel) return errResp('selfie_missing_in_r2', 500, origin, {
+    primary_selfie_r2_key: userRow.primary_selfie_r2_key,
+  });
+  const tempStockKey = `stock/_welcome_src_${pieceId}.jpg`;
+  await env.STOCK.put(tempStockKey, sel.body, {
+    httpMetadata: { contentType: 'image/jpeg' },
+  });
+  const sourceImageUrl = `https://api.mainfeed.app/public/stock/_welcome_src_${pieceId}.jpg`;
+
+  // Insert pending row. Images: type='image', stock_library_id=NULL,
+  // image_template_id set, generation_prompt = filled prompt, mime image/jpeg.
+  const ts = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO generated_pieces
+       (id, user_id, diary_entry_id, type, caption, r2_key, mime_type,
+        generation_provider, generation_prompt, created_at, download_count, share_count,
+        status, scenario, stock_library_id, image_template_id, width, height)
+     VALUES (?, ?, NULL, 'image', '', ?, 'image/jpeg', 'flux-pulid', ?, ?, 0, 0,
+             'processing', NULL, NULL, ?, 1024, 1024)`
+  ).bind(
+    pieceId, userId, r2Key, filledPrompt, ts,
+    template ? template.id : null,
+  ).run();
+
+  const payload = {
+    request_id: pieceId,
+    source_image_url: sourceImageUrl,
+    prompt: filledPrompt,
+    callback_url: 'https://api.mainfeed.app/api/swap/complete',
+    output_r2_key: r2Key,
+    width: 1024,
+    height: 1024,
+    num_steps: Number.isFinite(body.num_steps) ? Number(body.num_steps) : 4,
+    guidance: Number.isFinite(body.guidance) ? Number(body.guidance) : 4.0,
+    id_weight: Number.isFinite(body.id_weight) ? Number(body.id_weight) : 1.0,
+    start_step: Number.isFinite(body.start_step) ? Number(body.start_step) : 0,
+    base_seed: Number.isFinite(body.base_seed) ? Number(body.base_seed) : 42,
+    handle: userRow.handle || null,
+  };
+
+  const podUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/image';
+  let res;
+  try {
+    res = await fetchPodWithRetry(podUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.SWAP_POD_SECRET}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    try {
+      await env.DB.prepare("UPDATE generated_pieces SET status = 'failed' WHERE id = ?").bind(pieceId).run();
+    } catch (_) {}
+    return errResp('pod_unreachable', 502, origin, {
+      pod_url: podUrl,
+      detail: String(err).slice(0, 400),
+    });
+  }
+
+  const podText = await res.text().catch(() => '');
+  let podJson = null;
+  try { podJson = JSON.parse(podText); } catch (_) { /* keep as text */ }
+
+  if (!res.ok) {
+    try {
+      await env.DB.prepare("UPDATE generated_pieces SET status = 'failed' WHERE id = ?").bind(pieceId).run();
+    } catch (_) {}
+    return errResp(`pod_${res.status}`, 502, origin, {
+      pod_url: podUrl,
+      pod_response: podJson || podText.slice(0, 400),
+    });
+  }
+
+  return json({
+    ok: true,
+    request_id: pieceId,
+    pod_url: podUrl,
+    template_id: template ? template.id : null,
+    filled_prompt: filledPrompt,
+    output_r2_key: r2Key,
+    pod_response: podJson || podText.slice(0, 400),
+  }, {}, origin);
+}
+
+// Pick an image template + fill its slots so the filled prompt is unseen by
+// this user. Layer A from [[mainfeed_uniqueness_guarantee]]: prefer templates
+// the user has never used; within a template, re-roll slot values until the
+// filled prompt is unseen (5-attempt cap).
+//
+// Returns { template, filledPrompt } on success, or null if no unseen
+// (template, filled_prompt) combination exists for the user.
+async function pickImageTemplateAndPrompt(env, userId, appearanceBucket, explicitTemplateId) {
+  const bucketP = bucketPhrase(appearanceBucket);
+
+  // Step 1: find candidate templates. If explicit template_id passed, use only
+  // that one. Otherwise prefer never-seen templates first, then fall back to
+  // any active template (slot re-roll will still produce uniqueness).
+  let candidates;
+  if (explicitTemplateId) {
+    const row = await env.DB.prepare(
+      `SELECT id, category, prompt_template, slots FROM image_templates
+        WHERE id = ? AND active = 1`
+    ).bind(explicitTemplateId).first();
+    if (!row) return null;
+    candidates = [row];
+  } else {
+    // Never-seen-by-this-user templates, ordered random.
+    const unseenRows = await env.DB.prepare(
+      `SELECT t.id, t.category, t.prompt_template, t.slots FROM image_templates t
+        WHERE t.active = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM generated_pieces gp
+             WHERE gp.user_id = ?
+               AND gp.image_template_id = t.id
+               AND gp.deleted_at IS NULL
+          )
+        ORDER BY RANDOM() LIMIT 5`
+    ).bind(userId).all();
+    candidates = (unseenRows && unseenRows.results) ? unseenRows.results : [];
+
+    if (candidates.length === 0) {
+      // All templates have been used at least once — fall back to all active.
+      const fallback = await env.DB.prepare(
+        `SELECT id, category, prompt_template, slots FROM image_templates
+          WHERE active = 1 ORDER BY RANDOM() LIMIT 5`
+      ).all();
+      candidates = (fallback && fallback.results) ? fallback.results : [];
+    }
+  }
+
+  // Step 2: for each candidate, try up to 5 slot re-rolls to find an unseen
+  // filled prompt. With ~125 combos per template, collisions are rare unless
+  // the user has filled deep into the template's slot space.
+  for (const tpl of candidates) {
+    let slots;
+    try {
+      slots = JSON.parse(String(tpl.slots || '{}'));
+    } catch (_) {
+      continue;
+    }
+    const slotNames = Object.keys(slots).filter(k => Array.isArray(slots[k]) && slots[k].length > 0);
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      let prompt = String(tpl.prompt_template);
+      // {bucket_phrase} is special — sourced from BUCKET_PROMPT_FRAGMENTS, not template slots.
+      prompt = prompt.replaceAll('{bucket_phrase}', bucketP);
+      for (const slotName of slotNames) {
+        const values = slots[slotName];
+        const pick = values[Math.floor(Math.random() * values.length)];
+        prompt = prompt.replaceAll('{' + slotName + '}', String(pick));
+      }
+
+      // Check uniqueness for this user.
+      const seen = await env.DB.prepare(
+        `SELECT id FROM generated_pieces
+          WHERE user_id = ? AND image_template_id = ? AND generation_prompt = ?
+            AND deleted_at IS NULL LIMIT 1`
+      ).bind(userId, tpl.id, prompt).first();
+
+      if (!seen) {
+        return { template: tpl, filledPrompt: prompt };
+      }
+    }
+  }
+
+  return null;
+}
+
+
 // POST /api/swap/complete
 // Called by the pod when a swap finishes (success or failure).
 // Authed via Authorization: Bearer ${SWAP_POD_SECRET}.
@@ -2249,14 +2496,25 @@ async function handleSwapUpload(request, env, origin) {
       hint: 'key must start with "generated/" — pod uploads are scoped to generated outputs only',
     });
   }
-  // Path-traversal + extension guard.
-  if (key.includes('..') || !key.endsWith('.mp4')) {
-    return errResp('invalid_key', 400, origin, { key });
+  // Path-traversal + extension guard. Images (Flux+PuLID, 10/day quota) use
+  // .jpg; videos and GIFs use .mp4. Both land under generated/ — extension
+  // tells the worker which content-type to enforce.
+  if (key.includes('..')) return errResp('invalid_key', 400, origin, { key });
+  const isVideo = key.endsWith('.mp4');
+  const isImage = key.endsWith('.jpg');
+  if (!isVideo && !isImage) {
+    return errResp('invalid_key_extension', 400, origin, {
+      hint: 'key must end in .mp4 (video/GIF) or .jpg (Flux+PuLID cosplay image)',
+      key,
+    });
   }
 
-  const contentType = request.headers.get('Content-Type') || 'video/mp4';
-  if (!contentType.startsWith('video/')) {
-    return errResp('invalid_content_type', 400, origin, { contentType });
+  const contentType = request.headers.get('Content-Type') || (isVideo ? 'video/mp4' : 'image/jpeg');
+  if (isVideo && !contentType.startsWith('video/')) {
+    return errResp('invalid_content_type', 400, origin, { contentType, expected: 'video/*' });
+  }
+  if (isImage && !contentType.startsWith('image/')) {
+    return errResp('invalid_content_type', 400, origin, { contentType, expected: 'image/*' });
   }
 
   // Pre-check Content-Length so honest oversized clients get rejected
@@ -2279,7 +2537,7 @@ async function handleSwapUpload(request, env, origin) {
   }
 
   await env.CONTENT.put(key, body, {
-    httpMetadata: { contentType: 'video/mp4' },
+    httpMetadata: { contentType: isImage ? 'image/jpeg' : 'video/mp4' },
   });
 
   return json({
@@ -2342,6 +2600,61 @@ const APPEARANCE_BUCKETS = [
   { key: 'f_afro_dark_deep',             gender: 'f', length: 'medium', color: 'black',       texture: 'coily',    style: 'afro',   skin: 'deep' },
   { key: 'f_gray_medium_pale',           gender: 'f', length: 'medium', color: 'gray',        texture: 'straight', style: 'down',   skin: 'pale' },
 ];
+
+// Bucket key → human-readable prompt fragment. Used to fill the {bucket_phrase}
+// slot in image_templates (Flux+PuLID cosplay-image generation). Same source of
+// truth as the Hunyuan stock-library curation plan
+// ([[mainfeed_library_curation_plan]] §"Bucket key → Hunyuan prompt fragment").
+const BUCKET_PROMPT_FRAGMENTS = {
+  // Male (15)
+  m_bald:                       'bald man with clean-shaven head',
+  m_buzz_dark_med:               'man with very short buzz cut dark hair, medium-brown skin',
+  m_buzz_light_fair:             'man with very short buzz cut, fair Caucasian skin',
+  m_short_dark_straight_brown:   'man with short dark straight hair, medium-brown skin',
+  m_short_dark_straight_fair:    'man with short dark straight hair, fair Caucasian skin',
+  m_short_blonde_straight_pale:  'man with short blonde straight hair, pale Caucasian skin',
+  m_short_dark_coily_deep:       'Black man with very short dark coily hair, deep skin',
+  m_medium_dark_straight_brown:  'man with medium-length dark straight hair, medium-brown skin',
+  m_medium_dark_curly_brown:     'man with medium-length dark curly hair, medium-brown skin',
+  m_medium_brown_wavy_fair:      'man with medium-length brown wavy hair, fair Caucasian skin',
+  m_medium_blonde_wavy_pale:     'man with medium-length blonde wavy hair, pale skin',
+  m_long_dark_straight_brown:    'man with long dark straight hair past shoulders, medium-brown skin',
+  m_man_bun_dark_brown:          'man with dark hair tied in a top bun, medium-brown skin',
+  m_dreads_dark_deep:            'Black man with shoulder-length dreadlocks, deep skin',
+  m_gray_short_pale:             'older man with short gray hair, pale fair skin',
+  // Female (25)
+  f_pixie_dark_brown:            'woman with pixie cut dark hair, medium-brown skin',
+  f_pixie_blonde_pale:           'woman with pixie cut blonde hair, pale skin',
+  f_short_bob_dark_brown:        'woman with short bob dark hair, medium-brown skin',
+  f_short_bob_blonde_pale:       'woman with short bob blonde hair, pale skin',
+  f_short_dark_coily_deep:       'Black woman with short natural coily dark hair, deep skin',
+  f_medium_dark_straight_brown:  'woman with shoulder-length dark straight hair, medium-brown skin',
+  f_medium_dark_wavy_brown:      'woman with shoulder-length dark wavy hair, medium-brown skin',
+  f_medium_dark_curly_brown:     'woman with shoulder-length dark curly hair, medium-brown skin',
+  f_medium_brown_straight_fair:  'woman with shoulder-length brown straight hair, fair Caucasian skin',
+  f_medium_brown_wavy_fair:      'woman with shoulder-length brown wavy hair, fair Caucasian skin',
+  f_medium_blonde_straight_pale: 'woman with shoulder-length blonde straight hair, pale skin',
+  f_medium_blonde_wavy_pale:     'woman with shoulder-length blonde wavy hair, pale skin',
+  f_medium_red_wavy_pale:        'redhead woman with shoulder-length red wavy hair, pale freckled skin',
+  f_long_black_straight_brown:   'woman with long jet-black straight hair, medium-brown South Asian skin',
+  f_long_black_wavy_brown:       'woman with long black wavy hair, medium-brown skin',
+  f_long_brown_straight_fair:    'woman with long brown straight hair, fair Caucasian skin',
+  f_long_brown_wavy_fair:        'woman with long brown wavy hair, fair Caucasian skin',
+  f_long_blonde_straight_pale:   'woman with long blonde straight hair, pale skin',
+  f_long_blonde_wavy_pale:       'woman with long blonde wavy hair, pale skin',
+  f_long_red_wavy_pale:          'redhead woman with long red wavy hair, pale freckled skin',
+  f_long_dark_coily_deep:        'Black woman with long natural coily 4C hair, deep skin',
+  f_braids_dark_deep:            'Black woman with long cornrow braids, deep skin',
+  f_locs_dark_deep:              'Black woman with long dreadlocks, deep skin',
+  f_afro_dark_deep:              'Black woman with afro hairstyle, deep skin',
+  f_gray_medium_pale:            'older woman with medium-length gray hair, pale skin',
+};
+
+function bucketPhrase(bucketKey) {
+  // Fallback to a neutral phrase if the user hasn't been bucketed yet — keeps
+  // image generation working before the appearance-classify task finishes.
+  return BUCKET_PROMPT_FRAGMENTS[bucketKey] || 'a person';
+}
 
 const APPEARANCE_PROMPT = `You are classifying a person's appearance for face-swap library matching.
 Look at the photo and return STRICT JSON (no prose, no markdown, no backticks) with these EXACT keys:

@@ -78,17 +78,18 @@ RUN pip install --no-cache-dir -r requirements.txt \
          fastapi 'uvicorn[standard]' httpx boto3 huggingface_hub \
          Pillow cairosvg \
          packaging ninja \
-         'diffusers>=0.30' accelerate sentencepiece protobuf einops \
-         insightface \
+         sentencepiece protobuf einops \
+         insightface facexlib timm \
     && pip install --no-cache-dir flash_attn --no-build-isolation
 
-# === Install PuLID's own requirements (if any not already covered above) ===
-# PuLID upstream requirements.txt is small (mostly already-covered deps); install
-# anything missing without forcing a torch reinstall.
-RUN if [ -f /root/pulid/requirements.txt ]; then \
-      sed -i '/^torch/d; /^flash[_-]attn/d; /^onnxruntime/d' /root/pulid/requirements.txt && \
-      pip install --no-cache-dir -r /root/pulid/requirements.txt; \
-    fi
+# === PuLID-FLUX deps (DO NOT install PuLID's requirements.txt directly) ===
+# PuLID's upstream requirements.txt pins diffusers==0.25.0 and transformers==4.43.3,
+# both of which would DOWNGRADE the dreamidv-installed versions (0.35.2 / 4.49.0)
+# and break the DreamID-V pipeline. We install only the missing-from-dreamidv
+# deps explicitly in the RUN block above: sentencepiece + protobuf (T5 tokenizer
+# for HFEmbedder), einops, insightface, facexlib (PuLID FaceRestoreHelper), timm
+# (used by facexlib backbone). ftfy + opencv-python come from dreamidv's reqs.txt.
+# diffusers / accelerate / transformers / torchvision come from dreamidv's reqs.txt.
 
 # === Post-swap branding assets (caption + watermark burn-in) ===
 # Bundle local-source-of-truth assets:

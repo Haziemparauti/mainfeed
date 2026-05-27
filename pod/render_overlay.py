@@ -365,3 +365,33 @@ def brand_video(swapped_mp4: Path, workdir: Path,
     render_overlay_png(width, height, handle, caption, overlay_png)
     burn_overlay(swapped_mp4, overlay_png, branded_mp4)
     return branded_mp4
+
+
+def brand_image(swapped_jpg: Path, workdir: Path,
+                handle: Optional[str]) -> Path:
+    """
+    Take a raw Flux+PuLID JPEG and produce a watermarked branded JPEG.
+    Image format is WATERMARK-ONLY (no captions) per
+    [[mainfeed_image_library_architecture]] — captions are video-format-only.
+
+    Reuses render_overlay_png with caption=None so the watermark renders at
+    the same position + style as videos. Composes the transparent PNG onto
+    the JPEG with PIL alpha-blend (no ffmpeg dependency for the image path).
+
+    Returns the path to the branded JPEG. If handle is falsy, returns
+    swapped_jpg unchanged so callers can run unconditionally.
+    """
+    if not handle:
+        return swapped_jpg
+
+    base = Image.open(swapped_jpg).convert("RGBA")
+    width, height = base.size
+
+    overlay_png = workdir / "overlay.png"
+    render_overlay_png(width, height, handle, None, overlay_png)
+
+    overlay = Image.open(overlay_png).convert("RGBA")
+    composed = Image.alpha_composite(base, overlay).convert("RGB")
+    branded_jpg = workdir / "branded.jpg"
+    composed.save(str(branded_jpg), format="JPEG", quality=92, optimize=True)
+    return branded_jpg
