@@ -1148,7 +1148,9 @@ body.mf-app {
    wrapper is added by app.js when type==='image'. */
 
 .mf-piece--image {
-  perspective: 1200px;
+  /* Tighter perspective = more apparent 3D — same rotation angle reads as
+     a stronger tilt. Bumped from 1200 → 900 on 2026-05-28 user request. */
+  perspective: 900px;
   perspective-origin: 50% 50%;
 }
 
@@ -1166,9 +1168,12 @@ body.mf-app {
 }
 
 @keyframes mf-piece-wobble {
-  0%   { transform: rotateY(-1.5deg) rotateX(0.6deg); }
-  50%  { transform: rotateY( 1.5deg) rotateX(-0.6deg); }
-  100% { transform: rotateY(-1.5deg) rotateX(0.6deg); }
+  /* Amplitude bumped 2026-05-28: ±1.5° → ±3.5° on Y, ±0.6° → ±1.5° on X.
+     Combined with the tighter perspective (1200 → 900), the visible tilt
+     is noticeably stronger without crossing into seasick territory. */
+  0%   { transform: rotateY(-3.5deg) rotateX(1.5deg); }
+  50%  { transform: rotateY( 3.5deg) rotateX(-1.5deg); }
+  100% { transform: rotateY(-3.5deg) rotateX(1.5deg); }
 }
 
 /* Glass overlay — a thin highlight band along the top edge and a darker
