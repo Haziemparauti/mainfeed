@@ -7,23 +7,35 @@
 # under ~8 minutes from `bash` to a worker that can queue swaps.
 #
 # Usage:
-#   bash pod/scripts/spin_new_pod.sh                        # default A40 SECURE
-#   bash pod/scripts/spin_new_pod.sh "NVIDIA RTX A6000"     # GPU override
+#   bash pod/scripts/spin_new_pod.sh                            # default A40 SECURE
+#   bash pod/scripts/spin_new_pod.sh "NVIDIA RTX A6000"         # GPU override (SECURE)
+#   CLOUD_TYPE=COMMUNITY bash pod/scripts/spin_new_pod.sh       # community mode (cheaper, image-only)
+#   CLOUD_TYPE=COMMUNITY bash pod/scripts/spin_new_pod.sh "NVIDIA GeForce RTX 4090"
+#
+# Cloud type semantics:
+#   SECURE      — proven dev flow. SSH-based: live SCP of pod source + env writing.
+#                 PUBLIC_KEY install is reliable.
+#   COMMUNITY   — cheaper ($0.16-0.34/hr vs $0.44-0.69/hr) but spot-style.
+#                 PUBLIC_KEY isn't honored on community hosts, so we skip SSH
+#                 entirely and pass all secrets (SWAP_POD_SECRET + R2 creds)
+#                 in the deploy env array. The image must be current —
+#                 in-flight pod/ edits won't be reflected until CI rebuilds.
+#                 Requires GHCR image visibility = PUBLIC.
 #
 # What it does (in order):
-#   1. RunPod GraphQL deploy on SECURE cloud (PUBLIC_KEY install is reliable
-#      there — community pods don't always run the runpod entrypoint).
-#      Walks a fallback ladder if the first GPU type is unavailable.
-#   2. Polls RunPod for the public SSH endpoint and waits for sshd.
-#   3. SSH-bootstraps: apt deps, DreamID-V clone at pinned SHA, pip deps
-#      (including flash_attn no-build-isolation + onnxruntime-gpu).
-#      All idempotent — safe to re-run if interrupted.
-#   4. SCPs pod source code + fonts + brand SVG (everything from pod/).
-#   5. Writes the R2/secret env file on the pod and starts swap_server.py.
-#   6. Polls /health until model_loaded=true (weights pull from R2 mirror).
-#   7. Pushes the new pod's HTTP proxy URL to the worker's SWAP_POD_URL secret
+#   1. RunPod GraphQL deploy on $CLOUD_TYPE cloud. All required env (PUBLIC_KEY
+#      + SWAP_POD_SECRET + R2 creds) is sent in the mutation. Walks a fallback
+#      ladder if the first GPU type is unavailable.
+#   2. Polls RunPod for the public SSH endpoint (still appears on community,
+#      even though sshd inside won't accept our key).
+#   3-6. SECURE only: SSH handshake, apt/pip bootstrap (skip if pre-baked
+#      image), SCP pod source, write /root/pod_env.sh, start swap_server.py.
+#      COMMUNITY: skipped — swap_server starts itself via Dockerfile CMD
+#      using env from Step 1.
+#   7. Polls /health until model_loaded=true (~30s with R2 mirror, ~3 min cold).
+#   8. Pushes the new pod's HTTP proxy URL to the worker's SWAP_POD_URL secret
 #      via `wrangler secret put`. Worker can immediately reach the pod.
-#   8. Persists pod_id + SSH endpoint + proxy URL under mainfeed-stock/.
+#   9. Persists pod_id + SSH endpoint + proxy URL under mainfeed-stock/.
 #
 # Result: `curl https://api.mainfeed.app/api/admin/swap/queue ...` works.
 
@@ -41,26 +53,62 @@ SSH_KEY="$STOCK_DIR/runpod_ssh/id_ed25519"
 RUNPOD_API_KEY=$(< "$STOCK_DIR/runpod_key.txt")
 POD_SECRET=$(< "$STOCK_DIR/swap_pod_secret.txt")
 
+# R2 creds — needed in the deploy env for COMMUNITY mode (no SSH means no
+# post-deploy /root/pod_env.sh write; secrets must be plumbed at deploy time).
+# Plain `grep` (not `grep -oP` which fails on Git-Bash's non-UTF-8 locale)
+# avoids the Python path-mangling issue where Windows Python doesn't grok
+# `/c/...` paths.
+R2_ACCESS_KEY_ID=$(grep '^ACCESS_KEY_ID=' "$STOCK_DIR/r2_creds.txt" | head -1 | cut -d= -f2- | tr -d '\r\n')
+R2_SECRET_ACCESS_KEY=$(grep '^SECRET_ACCESS_KEY=' "$STOCK_DIR/r2_creds.txt" | head -1 | cut -d= -f2- | tr -d '\r\n')
+[ -z "$R2_ACCESS_KEY_ID" ] && { echo "ERROR: ACCESS_KEY_ID not found in $STOCK_DIR/r2_creds.txt" >&2; exit 1; }
+[ -z "$R2_SECRET_ACCESS_KEY" ] && { echo "ERROR: SECRET_ACCESS_KEY not found in $STOCK_DIR/r2_creds.txt" >&2; exit 1; }
+
+# Cloud type selector. SECURE is the dev-mode flow (SSH bootstrap + SCP source
+# for live iteration). COMMUNITY is image-only: no SSH (PUBLIC_KEY env isn't
+# honored on community hosts), so the image must already contain whatever code
+# the pod will run, and runtime secrets are passed via the deploy env array.
+#
+# Invoke COMMUNITY mode:  CLOUD_TYPE=COMMUNITY bash pod/scripts/spin_new_pod.sh
+# Verified working 2026-05-27 evening on 3090 community ($0.22/hr) after the
+# GHCR package was flipped to PUBLIC — image pull + container start + model
+# load completed in ~3 min with no SSH needed.
+CLOUD_TYPE="${CLOUD_TYPE:-SECURE}"
+
 # Pinned DreamID-V commit — the only SHA validated end-to-end (2026-05-25)
 DREAMIDV_SHA=9b589940577559c91481fb3a13bae000a55f97a1
 
 # The public key that matches $STOCK_DIR/runpod_ssh/id_ed25519 — runpod plumbs
-# this into the container's /root/.ssh/authorized_keys at startup.
+# this into the container's /root/.ssh/authorized_keys at startup (SECURE only;
+# community hosts don't reliably run this entrypoint logic).
 PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILLA2lhnTAxCvp2g6pLC5uWAui1+pEJUXZdW57r3lebu mainfeed-ghost-test"
 
-# GPU fallback ladder. SECURE cloud only — community pods don't reliably
-# install PUBLIC_KEY (cost: $0.05/hr extra, saves ~15 min of debug pain).
-# Sort: cheapest first that fits the workload, then up.
-#   A40    SECURE 48GB $0.44/hr  ← proven 2026-05-26 ($2.64 for 6h)
-#   3090   SECURE 24GB $0.46/hr  ← Ampere consumer, also fine
-#   A6000  SECURE 48GB $0.49/hr  ← previous prod baseline
-#   4090   SECURE 24GB $0.69/hr  ← fastest but pricey
-GPU_FALLBACK=(
-  "${1:-NVIDIA A40}"
-  "NVIDIA GeForce RTX 3090"
-  "NVIDIA RTX A6000"
-  "NVIDIA GeForce RTX 4090"
-)
+# GPU fallback ladders, split by cloud type. Cheapest viable first.
+#   SECURE (reliable, ~50% pricier):
+#     A40    48GB $0.44/hr  ← proven 2026-05-26 ($2.64 for 6h)
+#     3090   24GB $0.46/hr  ← Ampere consumer, also fine
+#     A6000  48GB $0.49/hr  ← previous prod baseline
+#     4090   24GB $0.69/hr  ← fastest but pricey
+#   COMMUNITY (spot-style — 3090 has been the most reliably deployable today;
+#   4090/A6000 frequently return "out of resources" on the matched host):
+#     3090   24GB $0.22/hr  ← cheapest 24GB that fits DreamID-V
+#     4090   24GB $0.34/hr  ← production target, supply variable
+#     A6000  48GB $0.33/hr  ← supply variable
+#     A5000  24GB $0.16/hr  ← cheapest but often sold out
+if [ "$CLOUD_TYPE" = "COMMUNITY" ]; then
+  GPU_FALLBACK=(
+    "${1:-NVIDIA GeForce RTX 3090}"
+    "NVIDIA GeForce RTX 4090"
+    "NVIDIA RTX A6000"
+    "NVIDIA RTX A5000"
+  )
+else
+  GPU_FALLBACK=(
+    "${1:-NVIDIA A40}"
+    "NVIDIA GeForce RTX 3090"
+    "NVIDIA RTX A6000"
+    "NVIDIA GeForce RTX 4090"
+  )
+fi
 
 # Default to our pre-baked image (built by .github/workflows/build-pod.yml):
 #   - DreamID-V cloned + checkout at pinned SHA
@@ -85,13 +133,17 @@ graphql() {
 
 # ===== Step 1: deploy =====
 
-echo "▶ Deploying pod (SECURE cloud, fallback ladder)..."
+echo "▶ Deploying pod ($CLOUD_TYPE cloud, fallback ladder)..."
 
+# env array baked into the deploy mutation. PUBLIC_KEY is honored only on
+# SECURE pods (community doesn't run the runpod entrypoint that installs it)
+# but we send it on both for back-compat. SWAP_POD_SECRET + R2 creds are
+# strictly required on community since there's no SSH to write pod_env.sh.
 POD_ID=""
 for GPU_TYPE in "${GPU_FALLBACK[@]}"; do
   printf "  trying %-30s ... " "$GPU_TYPE"
   RESP=$(graphql "$(cat <<EOF
-{"query":"mutation { podFindAndDeployOnDemand(input: { cloudType: SECURE, gpuCount: 1, volumeInGb: 0, containerDiskInGb: 60, gpuTypeId: \"$GPU_TYPE\", name: \"mainfeed-swap-$(date +%Y%m%d-%H%M)\", imageName: \"$POD_IMAGE\", ports: \"22/tcp,8000/http\", startSsh: true, env: [{key: \"PUBLIC_KEY\", value: \"$PUBLIC_KEY\"}] }) { id imageName desiredStatus } }"}
+{"query":"mutation { podFindAndDeployOnDemand(input: { cloudType: $CLOUD_TYPE, gpuCount: 1, volumeInGb: 0, containerDiskInGb: 60, gpuTypeId: \"$GPU_TYPE\", name: \"mainfeed-swap-$(date +%Y%m%d-%H%M)\", imageName: \"$POD_IMAGE\", ports: \"22/tcp,8000/http\", startSsh: true, env: [{key: \"PUBLIC_KEY\", value: \"$PUBLIC_KEY\"}, {key: \"SWAP_POD_SECRET\", value: \"$POD_SECRET\"}, {key: \"R2_ACCESS_KEY_ID\", value: \"$R2_ACCESS_KEY_ID\"}, {key: \"R2_SECRET_ACCESS_KEY\", value: \"$R2_SECRET_ACCESS_KEY\"}] }) { id imageName desiredStatus } }"}
 EOF
 )")
   POD_ID=$(echo "$RESP" | python -c "import json,sys; d=json.load(sys.stdin); p=(d.get('data',{}) or {}).get('podFindAndDeployOnDemand') or {}; print(p.get('id') or '')")
@@ -136,6 +188,14 @@ POD_IP=$(echo "$SSH_INFO" | cut -d' ' -f1)
 POD_PORT=$(echo "$SSH_INFO" | cut -d' ' -f2)
 echo "  ✓ SSH: $POD_IP:$POD_PORT"
 echo "$POD_IP:$POD_PORT" > "$STOCK_DIR/runpod_pod_ssh.txt"
+
+# ===== Steps 3-6: SSH-based bootstrap (SECURE only) =====
+# On COMMUNITY pods the PUBLIC_KEY install isn't honored, so we can't SSH.
+# Instead the deploy mutation already passed all required env (SWAP_POD_SECRET,
+# R2 creds) and the Dockerfile CMD auto-starts /root/swap_server.py with those
+# env vars at container start. The image must therefore be CURRENT — any local
+# pod/ edits not yet in the latest CI-built image won't be reflected.
+if [ "$CLOUD_TYPE" != "COMMUNITY" ]; then
 
 # ===== Step 3: wait for sshd to actually answer =====
 
@@ -225,17 +285,8 @@ scp $SSH_OPTS -P "$POD_PORT" \
 # ===== Step 6: write env + start swap_server =====
 
 echo "▶ Writing env file + starting swap_server.py..."
-# R2 creds: keep this in sync with mainfeed-stock/r2_creds.txt manually.
-# Avoid `grep -oP` because Git-Bash on Windows ships with a non-UTF-8
-# locale and PCRE syntax errors out ("supports only unibyte and UTF-8 locales").
-R2_ACCESS_KEY_ID=$(python -c "
-for line in open(r'$STOCK_DIR/r2_creds.txt'):
-    if line.startswith('ACCESS_KEY_ID='):
-        print(line.split('=',1)[1].strip()); break")
-R2_SECRET_ACCESS_KEY=$(python -c "
-for line in open(r'$STOCK_DIR/r2_creds.txt'):
-    if line.startswith('SECRET_ACCESS_KEY='):
-        print(line.split('=',1)[1].strip()); break")
+# R2 creds already loaded at top of script (also needed for the COMMUNITY
+# deploy-env path). No need to re-read here.
 
 ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" \
   POD_SECRET="$POD_SECRET" \
@@ -273,6 +324,10 @@ disown
 sleep 2
 echo "  PID: $(pgrep -f swap_server.py | head -1)"
 REMOTE
+
+else  # CLOUD_TYPE == COMMUNITY
+  echo "▶ COMMUNITY mode: skipping SSH bootstrap (image runs swap_server.py via CMD; secrets injected via deploy env)"
+fi  # end SECURE-only block
 
 # ===== Step 7: poll /health =====
 
