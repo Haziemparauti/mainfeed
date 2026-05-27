@@ -261,6 +261,7 @@ def generate_image(
     width: int = OUTPUT_W,
     height: int = OUTPUT_H,
     max_sequence_length: int = 128,
+    aggressive_offload: bool = False,
 ) -> str:
     """
     Generate one cosplay image from a selfie + prompt.
@@ -355,11 +356,20 @@ def generate_image(
     print(f"[PHASE] flux_pulid id_embed elapsed={_t_id_elapsed:.2f}s", flush=True)
 
     # === Denoise (Flux DiT on GPU during this phase) ===
+    # Two offload strategies:
+    #   - aggressive_offload=False (default, ~48 GB cards): whole Flux model
+    #     on GPU during denoise. ~24 GB params + 2 GB workspace = 26 GB peak.
+    #   - aggressive_offload=True (24 GB cards): Flux's transformer blocks
+    #     shuttle CPU↔GPU one-at-a-time during denoise. ~3-4 GB peak. 5-10x
+    #     slower per step but only path that fits 24 GB cards.
     _t_diff_start = _time.perf_counter()
     if offload:
         gen.pulid_model.components_to_device(torch.device("cpu"))
         torch.cuda.empty_cache()
-        gen.model = gen.model.to(device)
+        if aggressive_offload:
+            gen.model.components_to_gpu()  # PuLID's Flux class supports this
+        else:
+            gen.model = gen.model.to(device)
 
     x = _DENOISE(
         gen.model, **inp,
@@ -372,7 +382,7 @@ def generate_image(
         true_cfg=1.0,
         timestep_to_start_cfg=1,
         neg_txt=None, neg_txt_ids=None, neg_vec=None,
-        aggressive_offload=False,
+        aggressive_offload=aggressive_offload,
     )
     _t_diff_elapsed = _time.perf_counter() - _t_diff_start
     print(f"[PHASE] flux_pulid denoise steps={num_steps} elapsed={_t_diff_elapsed:.2f}s", flush=True)

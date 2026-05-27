@@ -191,6 +191,12 @@ class ImageRequest(BaseModel):
     # User handle drives the watermark burn-in. If null the raw Flux output
     # is uploaded (no watermark).
     handle: Optional[str] = None
+    # 24 GB cards (3090, 4090) can't hold the 24 GB Flux model + ~2 GB
+    # workspace at once — set aggressive_offload=true to shuttle Flux
+    # transformer blocks CPU↔GPU one-at-a-time during denoise. Slower
+    # (~5-10x per step) but only path that fits. 48 GB cards (A40, A6000)
+    # leave this false.
+    aggressive_offload: bool = False
 
 
 # ============ weight download (HF) ============
@@ -461,14 +467,16 @@ async def run_dreamidv(workdir: Path, src_image: Path, ref_video: Path,
 
 async def run_flux_pulid(workdir: Path, selfie: Path, prompt: str,
                          width: int, height: int, num_steps: int, guidance: float,
-                         id_weight: float, start_step: int, seed: int) -> Path:
+                         id_weight: float, start_step: int, seed: int,
+                         aggressive_offload: bool) -> Path:
     """Run one image generation against the warm Flux+PuLID pipeline (in-process)."""
     if not flux_pulid_runtime.is_ready():
         raise RuntimeError("flux_pulid_runtime not initialized; call init() at startup")
 
     output = workdir / "output.jpg"
     print(f"[swap_server] running flux+pulid (warm) "
-          f"{width}x{height} steps={num_steps} id_weight={id_weight} seed={seed}", flush=True)
+          f"{width}x{height} steps={num_steps} id_weight={id_weight} seed={seed} "
+          f"agg_offload={aggressive_offload}", flush=True)
     started = time.time()
     await asyncio.get_event_loop().run_in_executor(
         None,
@@ -483,6 +491,7 @@ async def run_flux_pulid(workdir: Path, selfie: Path, prompt: str,
             start_step=start_step,
             width=width,
             height=height,
+            aggressive_offload=aggressive_offload,
         ),
     )
     elapsed = round(time.time() - started, 2)
@@ -509,6 +518,7 @@ async def run_image(req: ImageRequest) -> None:
                 workdir, selfie, req.prompt,
                 req.width, req.height, req.num_steps, req.guidance,
                 req.id_weight, req.start_step, req.base_seed,
+                req.aggressive_offload,
             )
 
         # Watermark-only burn-in (NO captions per [[feedback_three_formats_are_distinct]]

@@ -141,10 +141,20 @@ echo "▶ Deploying pod ($CLOUD_TYPE cloud, fallback ladder)..."
 # (mandatory; pod auths to worker with this) and PUBLIC_KEY (SECURE only;
 # community doesn't honor it but harmless to send).
 POD_ID=""
+# Optional env overrides — both default to "" (omit from deploy env) so the
+# Dockerfile defaults apply. Inject from the caller's shell:
+#   DREAMIDV_ENABLED=0 bash pod/scripts/spin_new_pod.sh   # image-only test (skip /swap loading)
+#   FLUX_PULID_ENABLED=0 bash pod/scripts/spin_new_pod.sh # video-only test (skip /image loading)
+# We embed them into the deploy env array so the Dockerfile CMD's swap_server.py
+# sees them on the VERY FIRST container start — no waiting for SSH bootstrap.
+EXTRA_ENV=""
+[ -n "${DREAMIDV_ENABLED:-}" ]    && EXTRA_ENV="$EXTRA_ENV, {key: \\\"DREAMIDV_ENABLED\\\", value: \\\"$DREAMIDV_ENABLED\\\"}"
+[ -n "${FLUX_PULID_ENABLED:-}" ]  && EXTRA_ENV="$EXTRA_ENV, {key: \\\"FLUX_PULID_ENABLED\\\", value: \\\"$FLUX_PULID_ENABLED\\\"}"
+
 for GPU_TYPE in "${GPU_FALLBACK[@]}"; do
   printf "  trying %-30s ... " "$GPU_TYPE"
   RESP=$(graphql "$(cat <<EOF
-{"query":"mutation { podFindAndDeployOnDemand(input: { cloudType: $CLOUD_TYPE, gpuCount: 1, volumeInGb: 0, containerDiskInGb: 60, gpuTypeId: \"$GPU_TYPE\", name: \"mainfeed-swap-$(date +%Y%m%d-%H%M)\", imageName: \"$POD_IMAGE\", ports: \"22/tcp,8000/http\", startSsh: true, env: [{key: \"PUBLIC_KEY\", value: \"$PUBLIC_KEY\"}, {key: \"SWAP_POD_SECRET\", value: \"$POD_SECRET\"}] }) { id imageName desiredStatus } }"}
+{"query":"mutation { podFindAndDeployOnDemand(input: { cloudType: $CLOUD_TYPE, gpuCount: 1, volumeInGb: 0, containerDiskInGb: 60, gpuTypeId: \"$GPU_TYPE\", name: \"mainfeed-swap-$(date +%Y%m%d-%H%M)\", imageName: \"$POD_IMAGE\", ports: \"22/tcp,8000/http\", startSsh: true, env: [{key: \"PUBLIC_KEY\", value: \"$PUBLIC_KEY\"}, {key: \"SWAP_POD_SECRET\", value: \"$POD_SECRET\"}${EXTRA_ENV}] }) { id imageName desiredStatus } }"}
 EOF
 )")
   POD_ID=$(echo "$RESP" | python -c "import json,sys; d=json.load(sys.stdin); p=(d.get('data',{}) or {}).get('podFindAndDeployOnDemand') or {}; print(p.get('id') or '')")
