@@ -141,15 +141,23 @@ echo "▶ Deploying pod ($CLOUD_TYPE cloud, fallback ladder)..."
 # (mandatory; pod auths to worker with this) and PUBLIC_KEY (SECURE only;
 # community doesn't honor it but harmless to send).
 POD_ID=""
-# Optional env overrides — both default to "" (omit from deploy env) so the
+# Optional env overrides — default to "" (omit from deploy env) so the
 # Dockerfile defaults apply. Inject from the caller's shell:
 #   DREAMIDV_ENABLED=0 bash pod/scripts/spin_new_pod.sh   # image-only test (skip /swap loading)
 #   FLUX_PULID_ENABLED=0 bash pod/scripts/spin_new_pod.sh # video-only test (skip /image loading)
+#   HF_TOKEN=hf_xxx       bash pod/scripts/spin_new_pod.sh # needed for FLUX.1-schnell (gated repo)
 # We embed them into the deploy env array so the Dockerfile CMD's swap_server.py
 # sees them on the VERY FIRST container start — no waiting for SSH bootstrap.
+# Token auto-pickup from $STOCK_DIR/hf_token.txt if not in env (parallel pattern
+# to swap_pod_secret.txt + runpod_key.txt). Safe because $STOCK_DIR is the
+# gitignored secret cache.
+if [ -z "${HF_TOKEN:-}" ] && [ -f "$STOCK_DIR/hf_token.txt" ]; then
+  HF_TOKEN=$(< "$STOCK_DIR/hf_token.txt")
+fi
 EXTRA_ENV=""
 [ -n "${DREAMIDV_ENABLED:-}" ]    && EXTRA_ENV="$EXTRA_ENV, {key: \\\"DREAMIDV_ENABLED\\\", value: \\\"$DREAMIDV_ENABLED\\\"}"
 [ -n "${FLUX_PULID_ENABLED:-}" ]  && EXTRA_ENV="$EXTRA_ENV, {key: \\\"FLUX_PULID_ENABLED\\\", value: \\\"$FLUX_PULID_ENABLED\\\"}"
+[ -n "${HF_TOKEN:-}" ]            && EXTRA_ENV="$EXTRA_ENV, {key: \\\"HF_TOKEN\\\", value: \\\"$HF_TOKEN\\\"}"
 
 for GPU_TYPE in "${GPU_FALLBACK[@]}"; do
   printf "  trying %-30s ... " "$GPU_TYPE"
