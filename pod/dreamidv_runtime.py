@@ -243,6 +243,9 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
     if not _INITIALIZED:
         raise RuntimeError("dreamidv_runtime.init() must be called before run_swap()")
 
+    import time as _time
+    _t_swap_start = _time.perf_counter()
+
     cfg = _WAN_CONFIGS[task]
 
     # Ask DreamID-V for the user-facing target PLUS a tail buffer that we'll
@@ -257,7 +260,9 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
     final_pose_path = os.path.join(temp_dir, video_base + "_pose.mp4")
     final_mask_path = os.path.join(temp_dir, video_base + "_mask.mp4")
 
-    if not (os.path.exists(final_pose_path) and os.path.exists(final_mask_path)):
+    _t_dwpose_start = _time.perf_counter()
+    _dwpose_was_cached = os.path.exists(final_pose_path) and os.path.exists(final_mask_path)
+    if not _dwpose_was_cached:
         os.makedirs(temp_dir, exist_ok=True)
         try:
             _PROCESS_DWPOSE(ref_video, final_pose_path, final_mask_path)
@@ -267,11 +272,14 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
             raise
     else:
         logging.info(f"[dreamidv_runtime] DWPose cached, skipping: {final_mask_path}")
+    _t_dwpose_elapsed = _time.perf_counter() - _t_dwpose_start
+    print(f"[PHASE] dwpose cached={_dwpose_was_cached} elapsed={_t_dwpose_elapsed:.2f}s", flush=True)
 
     # === Diffusion (matches generate_dreamidv_faster.py lines 297-313) ===
     ref_paths = [ref_video, final_mask_path, src_image]
     prompt = "chang face"
 
+    _t_diff_start = _time.perf_counter()
     video = _PIPELINE.generate(
         prompt,
         ref_paths,
@@ -284,11 +292,14 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
         seed=seed,
         offload_model=offload_model,
     )
+    _t_diff_elapsed = _time.perf_counter() - _t_diff_start
+    print(f"[PHASE] diffusion steps={sample_steps} frames={requested_frame_num} elapsed={_t_diff_elapsed:.2f}s", flush=True)
 
     # === Save (matches generate_dreamidv_faster.py lines 316-328) ===
     # NB: cfg.sample_fps default is 16, BUT the CLI always passed
     # --sample_fps=24 because argparse default is 24 (not None). To stay
     # byte-compatible with the old subprocess pipeline we override.
+    _t_save_start = _time.perf_counter()
     _CACHE_VIDEO(
         tensor=video[None],
         save_file=out_mp4,
@@ -297,6 +308,12 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
         normalize=True,
         value_range=(-1, 1),
     )
+    _t_save_elapsed = _time.perf_counter() - _t_save_start
+    _t_total_elapsed = _time.perf_counter() - _t_swap_start
+    print(f"[PHASE] cache_video elapsed={_t_save_elapsed:.2f}s", flush=True)
+    print(f"[PHASE] TOTAL run_swap={_t_total_elapsed:.2f}s  "
+          f"(dwpose={_t_dwpose_elapsed:.1f}s diff={_t_diff_elapsed:.1f}s save={_t_save_elapsed:.1f}s)",
+          flush=True)
 
     # Tail-trim the glitchy last frames (see TAIL_TRIM_FRAMES comment above).
     if TAIL_TRIM_FRAMES > 0:
