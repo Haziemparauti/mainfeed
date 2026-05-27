@@ -1529,6 +1529,9 @@ export default {
     if (method === 'POST' && path === '/api/admin/swap/queue') return handleAdminSwapQueue(request, env, origin);
     // Pod-callback: pod posts here when a swap completes/fails (authed via SWAP_POD_SECRET, not ADMIN_TOKEN)
     if (method === 'POST' && path === '/api/swap/complete') return handleSwapComplete(request, env, origin);
+    // Pod-upload: pod streams swap-output mp4 here (authed via SWAP_POD_SECRET). Worker writes
+    // to R2 via binding so the pod never holds R2 creds (audit 2026-05-27).
+    if (method === 'POST' && path === '/api/swap/upload') return handleSwapUpload(request, env, origin);
 
     // Admin: classify a selfie into one of the 40 hair+skin appearance buckets (Llama 3.2 Vision)
     if (method === 'POST' && path === '/api/admin/detect-appearance') return handleAdminDetectAppearance(request, env, origin);
@@ -2221,6 +2224,57 @@ async function handleSwapComplete(request, env, origin) {
   }
 
   return json({ ok: true, ack: requestId }, {}, origin);
+}
+
+// POST /api/swap/upload?key=generated/<request_id>.mp4
+// The pod uploads its swap output mp4 here. Worker holds R2 access via the
+// `env.CONTENT` binding — pod never needs R2 credentials. Replaces the
+// previous direct-S3 boto3 upload from pod, which would leak R2 creds onto
+// community hardware (third-party hosts can read container env vars).
+//
+// Auth: Authorization: Bearer ${SWAP_POD_SECRET}.
+// Body: raw mp4 binary (Content-Type: video/mp4). Workers body cap is 100 MB,
+//       well above our ~3 MB swap outputs.
+// Query: ?key=generated/<request_id>.mp4  (must be under generated/ prefix —
+//        rejects any attempt to write to users/, models/, etc.)
+async function handleSwapUpload(request, env, origin) {
+  if (!checkPodSecret(request, env)) return errResp('unauthorized', 401, origin);
+
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key') || '';
+  // Hard-restrict to generated/ — a compromised pod must not be able to
+  // overwrite user selfies, model weights, brand assets, or any other prefix.
+  if (!key.startsWith('generated/')) {
+    return errResp('invalid_key_prefix', 400, origin, {
+      hint: 'key must start with "generated/" — pod uploads are scoped to generated outputs only',
+    });
+  }
+  // Path-traversal + extension guard.
+  if (key.includes('..') || !key.endsWith('.mp4')) {
+    return errResp('invalid_key', 400, origin, { key });
+  }
+
+  const contentType = request.headers.get('Content-Type') || 'video/mp4';
+  if (!contentType.startsWith('video/')) {
+    return errResp('invalid_content_type', 400, origin, { contentType });
+  }
+
+  const body = await request.arrayBuffer();
+  if (body.byteLength === 0) return errResp('empty_body', 400, origin);
+  if (body.byteLength > 100 * 1024 * 1024) {
+    return errResp('body_too_large', 413, origin, { hint: '100 MB max' });
+  }
+
+  await env.CONTENT.put(key, body, {
+    httpMetadata: { contentType: 'video/mp4' },
+  });
+
+  return json({
+    ok: true,
+    bucket: 'mainfeed-content',
+    key,
+    size: body.byteLength,
+  }, {}, origin);
 }
 
 // ============ Appearance-bucket detection (Llama 3.2 Vision) ============

@@ -65,11 +65,23 @@ OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/workspace/tmp"))
 PORT = int(os.environ.get("PORT", "8000"))
 HF_TOKEN = os.environ.get("HF_TOKEN", "") or None
 
+# Worker proxy URL for output upload. Pod POSTs the swap mp4 here and the
+# worker writes it to R2 via Cloudflare binding — pod never holds R2 creds.
+# This closes the leak vector where community-cloud hosts could read R2
+# credentials from the container's env (audit 2026-05-27).
+WORKER_UPLOAD_URL = os.environ.get(
+    "WORKER_UPLOAD_URL",
+    "https://api.mainfeed.app/api/swap/upload",
+)
+
 DREAMIDV_FASTER_CKPT = WEIGHTS_DIR / "dreamidv_faster.pth"
 WAN21_DIR = WEIGHTS_DIR / "wan2.1"
 DWPOSE_DIR = DREAMIDV_DIR / "pose" / "models"
 
-# R2 (Cloudflare S3-compatible) — for uploading swap outputs + (optionally) pulling weights.
+# R2 (Cloudflare S3-compatible) — optional. If creds are present the pod
+# pulls weights from R2 mirror (~30s). Without creds it falls back to
+# HuggingFace (~6 min cold). Output upload no longer uses these creds —
+# see WORKER_UPLOAD_URL above.
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "1107173d768105bad60ebb40ff28ef3d")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
@@ -249,22 +261,39 @@ async def download_to(url: str, dest: Path) -> None:
                     f.write(chunk)
 
 
-def upload_to_r2(src: Path, key: str, content_type: str = "video/mp4") -> dict:
-    """Upload a local file to R2 at `key` under R2_BUCKET. Returns metadata."""
-    if not STATE.r2:
-        raise RuntimeError("R2 not configured (missing R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY)")
-    STATE.r2.upload_file(
-        Filename=str(src),
-        Bucket=R2_BUCKET,
-        Key=key,
-        ExtraArgs={"ContentType": content_type},
-    )
-    return {
-        "bucket": R2_BUCKET,
-        "key": key,
-        "size": src.stat().st_size,
-        "s3_url": f"s3://{R2_BUCKET}/{key}",
+async def upload_via_worker(src: Path, key: str, content_type: str = "video/mp4") -> dict:
+    """Stream a local file to the worker's /api/swap/upload endpoint. The worker
+    holds R2 access via its Cloudflare binding and writes the file on the pod's
+    behalf — this lets the pod never hold R2 credentials. Bearer-authed via
+    SWAP_POD_SECRET (already shared between pod and worker).
+
+    Audit 2026-05-27: replaces the previous direct boto3 PUT, which would leak
+    R2 credentials onto community-cloud hosts (the host operator can read any
+    container's env vars). Worker enforces key prefix = "generated/" so a
+    compromised pod can't overwrite selfies, weights, or brand assets.
+    """
+    if not WORKER_UPLOAD_URL:
+        raise RuntimeError("WORKER_UPLOAD_URL not configured")
+    if not POD_SECRET:
+        raise RuntimeError("SWAP_POD_SECRET not set; cannot authenticate to worker")
+    size = src.stat().st_size
+    with open(src, "rb") as f:
+        data = f.read()
+    headers = {
+        "Authorization": f"Bearer {POD_SECRET}",
+        "Content-Type": content_type,
     }
+    params = {"key": key}
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        resp = await client.post(WORKER_UPLOAD_URL, content=data, headers=headers, params=params)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"worker upload {resp.status_code}: {resp.text[:300]}")
+        return {
+            "bucket": "mainfeed-content",
+            "key": key,
+            "size": size,
+            "worker_response": resp.json(),
+        }
 
 
 async def callback(callback_url: str, payload: dict) -> None:
@@ -374,15 +403,10 @@ async def run_swap(req: SwapRequest) -> None:
             print(f"[swap_server] {req.request_id} burn-in FAILED, uploading raw swap: {burn_err}",
                   flush=True)
 
-        # Upload output mp4 to R2 (this is the canonical delivery surface).
-        r2_meta = None
-        if R2_ENABLED:
-            r2_meta = await asyncio.get_event_loop().run_in_executor(
-                None, upload_to_r2, output, r2_key, "video/mp4",
-            )
-            print(f"[swap_server] {req.request_id} → r2://{r2_meta['bucket']}/{r2_meta['key']}", flush=True)
-        else:
-            print(f"[swap_server] {req.request_id} WARNING: R2 not configured, output kept on pod disk only", flush=True)
+        # Upload output mp4 via the worker proxy. Pod never holds R2 creds —
+        # worker writes to R2 on the pod's behalf via Cloudflare binding.
+        r2_meta = await upload_via_worker(output, r2_key, "video/mp4")
+        print(f"[swap_server] {req.request_id} → r2://{r2_meta['bucket']}/{r2_meta['key']} ({r2_meta['size']} bytes)", flush=True)
 
         elapsed = round(time.time() - started, 2)
         STATE.total_completed += 1
@@ -430,14 +454,25 @@ async def on_startup() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ensure_weights()
 
-    # Build R2 client + smoke-test perms on the configured bucket BEFORE
-    # the slow model load so config errors surface fast.
+    # R2 client is OPTIONAL now — only used by ensure_weights() for the fast
+    # boot path. Output uploads go through the worker proxy (no creds needed
+    # on the pod). If R2 creds aren't set, ensure_weights already fell back
+    # to HuggingFace above and STATE.r2 stays None.
     STATE.r2 = build_r2_client()
     if STATE.r2:
-        STATE.r2.head_bucket(Bucket=R2_BUCKET)
-        print(f"[swap_server] R2 OK — bucket={R2_BUCKET} prefix={R2_OUTPUT_PREFIX}", flush=True)
+        try:
+            STATE.r2.head_bucket(Bucket=R2_BUCKET)
+            print(f"[swap_server] R2 weights-mirror OK (bucket={R2_BUCKET})", flush=True)
+        except Exception as e:
+            print(f"[swap_server] R2 head_bucket failed (weights came from HF fallback): {e}", flush=True)
+            STATE.r2 = None
     else:
-        print("[swap_server] R2 disabled (no creds set)", flush=True)
+        print("[swap_server] R2 client disabled (no creds set) — output uploads go via worker proxy", flush=True)
+
+    # Verify worker upload endpoint reachable + auth works (cheap GET on the
+    # base origin's /api/swap/complete? No — that needs a body. Skip preflight,
+    # let first swap fail loudly if misconfigured).
+    print(f"[swap_server] worker upload URL: {WORKER_UPLOAD_URL}", flush=True)
 
     # Load DreamID-V once into GPU memory. Replaces the previous
     # subprocess-per-swap behavior — saves ~10-15s of cold-start per request

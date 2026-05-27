@@ -53,15 +53,15 @@ SSH_KEY="$STOCK_DIR/runpod_ssh/id_ed25519"
 RUNPOD_API_KEY=$(< "$STOCK_DIR/runpod_key.txt")
 POD_SECRET=$(< "$STOCK_DIR/swap_pod_secret.txt")
 
-# R2 creds — needed in the deploy env for COMMUNITY mode (no SSH means no
-# post-deploy /root/pod_env.sh write; secrets must be plumbed at deploy time).
-# Plain `grep` (not `grep -oP` which fails on Git-Bash's non-UTF-8 locale)
-# avoids the Python path-mangling issue where Windows Python doesn't grok
-# `/c/...` paths.
-R2_ACCESS_KEY_ID=$(grep '^ACCESS_KEY_ID=' "$STOCK_DIR/r2_creds.txt" | head -1 | cut -d= -f2- | tr -d '\r\n')
-R2_SECRET_ACCESS_KEY=$(grep '^SECRET_ACCESS_KEY=' "$STOCK_DIR/r2_creds.txt" | head -1 | cut -d= -f2- | tr -d '\r\n')
-[ -z "$R2_ACCESS_KEY_ID" ] && { echo "ERROR: ACCESS_KEY_ID not found in $STOCK_DIR/r2_creds.txt" >&2; exit 1; }
-[ -z "$R2_SECRET_ACCESS_KEY" ] && { echo "ERROR: SECRET_ACCESS_KEY not found in $STOCK_DIR/r2_creds.txt" >&2; exit 1; }
+# R2 creds (optional since 2026-05-27 security refactor) — only needed if you
+# want the pod to pull weights from the R2 mirror at boot (fast: ~30s vs
+# HuggingFace's ~6 min). Output uploads now go through the worker proxy at
+# WORKER_UPLOAD_URL, so the pod no longer needs R2 write access. If you DO
+# inject R2 creds, scope them READ-ONLY to the models/ prefix only — never
+# give the pod broader access.
+# Plain `grep` avoids the Git-Bash + Windows-Python /c/... path-mangling issue.
+R2_ACCESS_KEY_ID=$(grep '^ACCESS_KEY_ID=' "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
+R2_SECRET_ACCESS_KEY=$(grep '^SECRET_ACCESS_KEY=' "$STOCK_DIR/r2_creds.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r\n' || echo "")
 
 # Cloud type selector. SECURE is the dev-mode flow (SSH bootstrap + SCP source
 # for live iteration). COMMUNITY is image-only: no SSH (PUBLIC_KEY env isn't
@@ -135,15 +135,16 @@ graphql() {
 
 echo "▶ Deploying pod ($CLOUD_TYPE cloud, fallback ladder)..."
 
-# env array baked into the deploy mutation. PUBLIC_KEY is honored only on
-# SECURE pods (community doesn't run the runpod entrypoint that installs it)
-# but we send it on both for back-compat. SWAP_POD_SECRET + R2 creds are
-# strictly required on community since there's no SSH to write pod_env.sh.
+# env array baked into the deploy mutation. Since the 2026-05-27 security
+# refactor the pod no longer needs R2 credentials by default — output
+# uploads go through the worker proxy. We only inject SWAP_POD_SECRET
+# (mandatory; pod auths to worker with this) and PUBLIC_KEY (SECURE only;
+# community doesn't honor it but harmless to send).
 POD_ID=""
 for GPU_TYPE in "${GPU_FALLBACK[@]}"; do
   printf "  trying %-30s ... " "$GPU_TYPE"
   RESP=$(graphql "$(cat <<EOF
-{"query":"mutation { podFindAndDeployOnDemand(input: { cloudType: $CLOUD_TYPE, gpuCount: 1, volumeInGb: 0, containerDiskInGb: 60, gpuTypeId: \"$GPU_TYPE\", name: \"mainfeed-swap-$(date +%Y%m%d-%H%M)\", imageName: \"$POD_IMAGE\", ports: \"22/tcp,8000/http\", startSsh: true, env: [{key: \"PUBLIC_KEY\", value: \"$PUBLIC_KEY\"}, {key: \"SWAP_POD_SECRET\", value: \"$POD_SECRET\"}, {key: \"R2_ACCESS_KEY_ID\", value: \"$R2_ACCESS_KEY_ID\"}, {key: \"R2_SECRET_ACCESS_KEY\", value: \"$R2_SECRET_ACCESS_KEY\"}] }) { id imageName desiredStatus } }"}
+{"query":"mutation { podFindAndDeployOnDemand(input: { cloudType: $CLOUD_TYPE, gpuCount: 1, volumeInGb: 0, containerDiskInGb: 60, gpuTypeId: \"$GPU_TYPE\", name: \"mainfeed-swap-$(date +%Y%m%d-%H%M)\", imageName: \"$POD_IMAGE\", ports: \"22/tcp,8000/http\", startSsh: true, env: [{key: \"PUBLIC_KEY\", value: \"$PUBLIC_KEY\"}, {key: \"SWAP_POD_SECRET\", value: \"$POD_SECRET\"}] }) { id imageName desiredStatus } }"}
 EOF
 )")
   POD_ID=$(echo "$RESP" | python -c "import json,sys; d=json.load(sys.stdin); p=(d.get('data',{}) or {}).get('podFindAndDeployOnDemand') or {}; print(p.get('id') or '')")
@@ -290,27 +291,16 @@ echo "▶ Writing env file + starting swap_server.py..."
 
 ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" \
   POD_SECRET="$POD_SECRET" \
-  R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
-  R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
   bash -s <<'REMOTE'
 set -e
+# Minimal env file — most defaults are baked into the Dockerfile ENV (see
+# pod/Dockerfile). Only secrets + dev-mode overrides go here.
+# R2 credentials are NOT written: since 2026-05-27 the pod uploads outputs
+# via the worker proxy (env.CONTENT binding on the worker side). The pod
+# never holds R2 creds, so even SECURE-host env can't leak them.
 cat > /root/pod_env.sh <<ENV
-R2_ACCOUNT_ID=1107173d768105bad60ebb40ff28ef3d
-R2_ACCESS_KEY_ID=$R2_ACCESS_KEY_ID
-R2_SECRET_ACCESS_KEY=$R2_SECRET_ACCESS_KEY
-R2_BUCKET=mainfeed-content
-R2_OUTPUT_PREFIX=generated/
-R2_WEIGHTS_PREFIX=models/
-HARDEN_WEIGHTS_R2=1
 SWAP_POD_SECRET=$POD_SECRET
-WEIGHTS_DIR=/workspace/ckpts
-DREAMIDV_DIR=/root/dreamidv
 DEBUG_KEEP_WORKDIR=1
-# torch.compile mode for the DiT — measured 2026-05-27 night (clean
-# steady-state re-test): "default" gives +14% over eager (4.10 vs 4.78 s/it),
-# no quality regression. max-autotune CRASHES 2nd swap, reduce-overhead silently
-# falls back to default — compile-time ceiling is +14%. Set to "0" for eager fallback.
-DREAMIDV_TORCH_COMPILE=default
 ENV
 chmod 600 /root/pod_env.sh
 

@@ -105,20 +105,24 @@ ENV WEIGHTS_DIR=/workspace/ckpts \
 #     (4.10 vs 4.78 s/it at frame_num=81), visually identical output, locked.
 #     max-autotune / reduce-overhead are DEAD (CUDA graphs incompatible with
 #     our per-swap noise tensor allocation). Compile-time ceiling reached.
-#   HARDEN_WEIGHTS_R2=1 → ensure_weights() pulls from R2 mirror (~30s, fast)
-#     instead of HuggingFace (~6 min, slow), per pod/README.md.
-# These can be overridden at container/pod-spin time if a future test needs
-# eager mode or HuggingFace fallback. spin_new_pod.sh re-writes them into
-# pod_env.sh redundantly (same value, harmless).
+#
+# HARDEN_WEIGHTS_R2 defaults to 0 since the security refactor 2026-05-27:
+# pod no longer holds R2 credentials by default (output uploads go via the
+# worker proxy at WORKER_UPLOAD_URL). Weights load from HuggingFace at boot
+# (~6 min cold). To re-enable the R2 weights fast-path (~30s cold), set
+# HARDEN_WEIGHTS_R2=1 AND inject a READ-ONLY token scoped to models/ only —
+# never inject a token with write access or access to other prefixes.
 ENV DREAMIDV_TORCH_COMPILE=default \
-    HARDEN_WEIGHTS_R2=1 \
+    HARDEN_WEIGHTS_R2=0 \
     R2_ACCOUNT_ID=1107173d768105bad60ebb40ff28ef3d \
     R2_BUCKET=mainfeed-content \
     R2_OUTPUT_PREFIX=generated/ \
-    R2_WEIGHTS_PREFIX=models/
+    R2_WEIGHTS_PREFIX=models/ \
+    WORKER_UPLOAD_URL=https://api.mainfeed.app/api/swap/upload
 
 # Secret env vars (must be supplied at pod-spin time, NOT baked into image):
-#   SWAP_POD_SECRET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+#   SWAP_POD_SECRET                                      — required (pod auths to worker)
+#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY               — OPTIONAL (only if HARDEN_WEIGHTS_R2=1)
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s \
