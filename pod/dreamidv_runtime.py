@@ -107,7 +107,13 @@ def init(weights_dir: str, dreamidv_dir: str, task: str = "swapface",
     from pose.extract import process_dwpose
 
     _WAN_CONFIGS = WAN_CONFIGS
-    _SIZE_CONFIGS = SIZE_CONFIGS
+    # Wan ships only ONE square preset (1024*1024) — ~6x heavier than 832*480 and
+    # too slow for per-user pre-bake (~12 min/swap measured). The arc format is
+    # 1:1, so register the planned smaller squares: 512² is the locked target,
+    # 720² the higher-fidelity dial. Both are /16-divisible (512/16=32, 720/16=45)
+    # so the DiT/VAE handle them; quality dips vs 1024² — the deliberate trade for
+    # bake speed/cost (the 1024² test confirmed 1:1/5s renders; we don't need it).
+    _SIZE_CONFIGS = { **SIZE_CONFIGS, '512*512': (512, 512), '720*720': (720, 720) }
     _CACHE_VIDEO = cache_video
     _PROCESS_DWPOSE = process_dwpose
     _DEVICE = device_id
