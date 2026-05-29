@@ -272,6 +272,7 @@ export async function getSagaDays(env, userId) {
     `SELECT day,
             COUNT(*) AS total,
             SUM(CASE WHEN status='ready' THEN 1 ELSE 0 END) AS ready,
+            SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) AS processing,
             MIN(reveal_at) AS reveal_at
        FROM generated_pieces
       WHERE user_id = ? AND arc = ? AND deleted_at IS NULL
@@ -284,6 +285,7 @@ export async function getSagaDays(env, userId) {
     title: ((arcManifest.days || {})[String(r.day)] || {}).title || `Day ${r.day}`,
     total: r.total,
     ready: r.ready,
+    processing: r.processing,
     open: r.reveal_at != null && r.reveal_at <= t && r.ready > 0,
     revealed_at: r.reveal_at,
   }));

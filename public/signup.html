@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=26" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=26" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=27" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=27" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=26" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=26" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=27" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=27" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -144,11 +144,16 @@
 
     <!-- ============ Progress screen (replaces form after submit succeeds) ============ -->
     <section class="mf-progress-screen" id="mf-progress-screen" hidden>
+      <div class="mf-progress-eta" id="mf-progress-eta">starting up…</div>
       <h1>Creating your Mainfeed</h1>
       <div class="mf-progress-bar">
         <div class="mf-progress-fill" id="mf-progress-fill"></div>
       </div>
-      <div class="mf-progress-pct" id="mf-progress-pct">0%</div>
+      <div class="mf-progress-pct" id="mf-progress-pct">0 / 10 ready</div>
+      <div class="mf-progress-teaser" id="mf-progress-teaser">
+        <p class="mf-progress-teaser-lead">Your first chapter is being filmed.</p>
+        <p class="mf-progress-teaser-sub">Ten moments — videos, moving stills &amp; portraits — every one starring you. The good stuff is worth the wait.</p>
+      </div>
     </section>
   </main>
 
@@ -384,65 +389,58 @@
       });
     }
 
+    // Real-progress loader. The bar tracks how many of Day 1's pieces have
+    // actually baked into the account (ready / total from /api/saga/days) — NOT a
+    // stopwatch. We embrace the wait (it's the "first chapter" anticipation), so
+    // we fill honestly and only enter once the whole day has finished rendering
+    // (nothing left processing) or we hit a generous safety cap.
     async function runProgressUntilReady() {
       const fill = document.getElementById('mf-progress-fill');
       const pctEl = document.getElementById('mf-progress-pct');
-      setProgressTitle('Creating your Mainfeed');
-
-      // Estimated total time: ~290s warm-pipeline swap + ~10s signup processing
-      // + ~10s video buffering. Bar fills smoothly toward 92% over this window.
-      // Phase swaps to "loading" when the piece flips to status='ready' on the API.
-      // Previously 195s — bumped 2026-05-26 to match actual warm-pipeline timing
-      // (the bar used to sit frozen at 92% for ~100s before reality caught up).
-      const TARGET_SECONDS = 310;
+      const etaEl = document.getElementById('mf-progress-eta');
+      const BASELINE_MIN = 13;                 // premium first-chapter estimate
+      const MAX_WAIT_MS = 25 * 60 * 1000;      // safety cap (e.g. a piece fails)
       const startTime = Date.now();
-      let pct = 0;
-      let ready = false;
-      let readyPiece = null;
-      let phase = 'generating';
 
+      let total = 10, ready = 0, processing = 1, done = false, shown = 0;
+
+      // Ease the visible bar toward the real ready/total target so it climbs
+      // gently rather than jumping as each piece lands.
       const tick = setInterval(() => {
-        const elapsed = (Date.now() - startTime) / 1000;
-        if (phase === 'generating') {
-          const target = Math.min(92, (elapsed / TARGET_SECONDS) * 92);
-          if (target > pct) pct = target;
-        } else if (phase === 'loading') {
-          // Ease toward 99% during preload — actual `canplaythrough` snaps to 100%
-          if (pct < 99) pct = Math.min(99, pct + 0.4);
+        const target = total > 0 ? (ready / total) * 100 : 0;
+        if (shown < target) shown = Math.min(target, shown + 0.5);
+        fill.style.width = (done ? 100 : Math.min(99, shown)).toFixed(1) + '%';
+        pctEl.textContent = ready + ' / ' + total + ' ready';
+        if (done) {
+          etaEl.textContent = 'your story is ready';
+        } else {
+          const remain = Math.max(1, Math.round(BASELINE_MIN * (1 - ready / Math.max(1, total))));
+          etaEl.textContent = 'about ' + remain + ' min remaining';
         }
-        fill.style.width = pct.toFixed(1) + '%';
-        pctEl.textContent = Math.round(pct) + '%';
-      }, 100);
+      }, 120);
 
-      // Poll feed every 5s until a piece is ready (or all failed / 10min cap).
-      const MAX_WAIT_MS = 600000;
-      while (!ready) {
-        await new Promise((r) => setTimeout(r, 5000));
+      while (!done) {
+        await new Promise((r) => setTimeout(r, 4000));
         if (Date.now() - startTime > MAX_WAIT_MS) break;
         try {
-          const res = await fetch(`${API}/api/feed`, { credentials: 'include' });
-          if (res.ok) {
-            const data = await res.json();
-            const pieces = data.pieces || [];
-            const found = pieces.find((p) => p.status === 'ready');
-            if (found) { readyPiece = found; ready = true; break; }
-            if (pieces.length > 0 && pieces.every((p) => p.status === 'failed')) break;
-          }
-        } catch (_) { /* keep polling */ }
+          const res = await fetch(`${API}/api/saga/days`, { credentials: 'include' });
+          if (!res.ok) continue;
+          const data = await res.json();
+          const d1 = (data.days || []).find((d) => Number(d.day) === 1);
+          if (!d1) continue;                   // saga not dispatched yet — keep polling
+          total = d1.total || total;
+          ready = d1.ready || 0;
+          processing = (d1.processing != null) ? d1.processing : Math.max(0, total - ready);
+          // "Done" = nothing still rendering AND at least one piece landed.
+          if (ready > 0 && processing === 0) done = true;
+        } catch (_) { /* transient — keep polling */ }
       }
 
-      // Swap to "loading video" phase + wait for actual playback readiness.
-      if (readyPiece && readyPiece.file_url) {
-        // Stay on "Creating your Mainfeed" title — the bar communicates phase.
-        phase = 'loading';
-        await preloadVideoForPlayback(`${API}${readyPiece.file_url}`);
-      }
-
-      // Snap to 100% before redirect.
       clearInterval(tick);
       fill.style.width = '100%';
-      pctEl.textContent = '100%';
-      await new Promise((r) => setTimeout(r, 250));
+      pctEl.textContent = (ready || total) + ' / ' + total + ' ready';
+      etaEl.textContent = 'your story is ready';
+      await new Promise((r) => setTimeout(r, 700));
     }
 
     form.addEventListener('submit', async (e) => {

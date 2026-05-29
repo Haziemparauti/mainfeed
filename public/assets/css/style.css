@@ -2685,3 +2685,35 @@ body.mf-app {
   color: var(--text-mute, #9aa);
   letter-spacing: 0.02em;
 }
+/* Estimate line ABOVE the "Creating your Mainfeed" title — frames the wait as
+   premium anticipation, not an apology. The bar below tracks real ready/total. */
+.mf-progress-eta {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #ffd27f;
+  margin-bottom: 14px;
+}
+/* Room under the bar for exciting copy / hint imagery while the chapter bakes. */
+.mf-progress-teaser {
+  margin-top: 40px;
+  padding: 22px 20px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  text-align: center;
+}
+.mf-progress-teaser-lead {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.01em;
+}
+.mf-progress-teaser-sub {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-mute, #9aa);
+}
