@@ -1089,15 +1089,20 @@ body.mf-app {
   animation: mf-spin 0.9s linear infinite;
 }
 @keyframes mf-spin { to { transform: rotate(360deg); } }
-.mf-progress {
+/* Feed "saga baking" fallback bar. UNIQUE class names — must NOT collide with
+   the signup form's .mf-progress step-dots (style.css:557) or the signup
+   progress screen's .mf-progress-bar determinate track (style.css:2623). An
+   earlier version reused those names and bled this slide animation onto the
+   signup bar (made it skate left-right) + squashed the 3 step-dots into a pill. */
+.mf-saga-progress {
   width: 200px; max-width: 70%; height: 6px; margin: 0 auto;
   background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden;
 }
-.mf-progress-bar {
+.mf-saga-progress-bar {
   height: 100%; width: 40%; border-radius: 999px; background: var(--accent-grad);
-  animation: mf-progress-slide 1.6s ease-in-out infinite;
+  animation: mf-saga-slide 1.6s ease-in-out infinite;
 }
-@keyframes mf-progress-slide {
+@keyframes mf-saga-slide {
   0% { transform: translateX(-120%); }
   100% { transform: translateX(320%); }
 }

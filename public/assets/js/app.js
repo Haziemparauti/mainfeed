@@ -131,7 +131,7 @@ function renderDayList(days) {
         <div class="mf-saga-spinner"></div>
         <h2>Your story is being created…</h2>
         <p>Day 1 of <b>${escapeHtml(_shareName)}</b> is rendering. This takes a few minutes — it will appear here on its own.</p>
-        <div class="mf-progress"><div class="mf-progress-bar"></div></div>
+        <div class="mf-saga-progress"><div class="mf-saga-progress-bar"></div></div>
       </div>`;
     return;
   }
