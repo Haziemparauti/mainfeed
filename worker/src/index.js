@@ -1,7 +1,7 @@
 // Mainfeed API worker — v0 backend
 // Endpoints: signup, login, logout, me, feed, diary, piece file, piece delete
 
-import { startSaga, runBaker, getSagaDays, getDayPieces } from './storytime.js';
+import { startSaga, runBaker, getSagaDays, getDayPieces, dispatchDay } from './storytime.js';
 
 const ALLOWED_ORIGINS = new Set([
   'https://mainfeed.app',
@@ -652,6 +652,24 @@ async function handleSagaDay(request, env, origin) {
   if (!day) return errResp('missing_day', 400, origin);
   const pieces = await getDayPieces(env, r.session.user_id, day);
   return json({ ok: true, day, pieces }, {}, origin);
+}
+
+// Admin: re-dispatch one day for a user (wipes that day's pieces first), so we
+// can re-run a day's bake without a fresh signup. For test iteration. ADMIN_TOKEN.
+async function handleAdminRebakeDay(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  const body = await request.json().catch(() => ({}));
+  const handle = String(body.handle || '').toLowerCase().trim();
+  const day = parseInt(body.day || 0, 10);
+  if (!handle || !day) return errResp('missing_fields', 400, origin);
+  const u = await env.DB.prepare(
+    'SELECT id, handle, appearance_bucket, primary_selfie_r2_key, arc, saga_started_at FROM users WHERE handle = ? AND deleted_at IS NULL'
+  ).bind(handle).first();
+  if (!u) return errResp('user_not_found', 404, origin);
+  await env.DB.prepare('DELETE FROM generated_pieces WHERE user_id = ? AND arc = ? AND day = ?')
+    .bind(u.id, u.arc, day).run();
+  await dispatchDay(env, { ...u }, day);
+  return json({ ok: true, handle, day, redispatched: true }, {}, origin);
 }
 
 async function handlePieceFile(request, env, origin, pieceId) {
@@ -1453,8 +1471,16 @@ async function handleDiaryCreate(request, env, origin) {
 // previously invisible to the user (feed filters to 'ready') AND occupied
 // orphan public selfie files. This sweeps them.
 async function runJanitor(env) {
-  const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 min
-  const cutoff = Date.now() - STUCK_THRESHOLD_MS;
+  // created_at is stored in SECONDS (worker now() convention) — compare in
+  // seconds, NOT against Date.now() (ms), which treats every piece as ~50,000
+  // years old and reaps it mid-bake (this silently nuked every Storytime piece
+  // each cron tick; the old welcome flow was immune only because it left
+  // created_at NULL). 45 min covers a full serial day-bake (~15 min) + backlog
+  // headroom. NOTE: the trial-week pre-bake queues ~140 pieces (hours of serial
+  // GPU) — before that ships, gate the sweep on an inactive bake_job, not wall
+  // clock, or legit deep-queue pieces will be reaped.
+  const STUCK_THRESHOLD_SEC = 45 * 60; // 45 min
+  const cutoff = Math.floor(Date.now() / 1000) - STUCK_THRESHOLD_SEC;
   const stuck = await env.DB.prepare(
     `SELECT id, user_id FROM generated_pieces
      WHERE status = 'processing' AND created_at < ?
@@ -1517,6 +1543,7 @@ export default {
     // Storytime feed: arc → day list, and one day's pieces
     if (method === 'GET' && path === '/api/saga/days') return handleSagaDays(request, env, origin);
     if (method === 'GET' && path === '/api/saga/day') return handleSagaDay(request, env, origin);
+    if (method === 'POST' && path === '/api/admin/rebake-day') return handleAdminRebakeDay(request, env, origin);
 
     // Piece (file stream, delete, publish toggle)
     const pieceFileMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)\/file$/);

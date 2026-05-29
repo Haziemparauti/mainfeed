@@ -21,13 +21,13 @@
 
 import arcManifest from '../../content/arcs/jungle_survival.json';
 
-const DAY_MS = 86_400_000;
+const DAY_SEC = 86_400;   // worker timestamps are in SECONDS (unixepoch), not ms
 const ARC = arcManifest.arc;                 // 'jungle_survival'
 const ARC_SHARE = arcManifest.share_name;    // 'LOST'
 const API = 'https://api.mainfeed.app';
 
 const uid = () => crypto.randomUUID();
-const now = () => Date.now();
+const now = () => Math.floor(Date.now() / 1000);   // SECONDS, to match the worker's now()
 
 // gender is encoded as the bucket prefix ("m_..." / "f_...") — derive it rather
 // than rely on the drifted stock_library.gender column.
@@ -36,7 +36,7 @@ const genderOf = (bucket, fallback) =>
 
 // reveal_at for a given day under the CALENDAR model (simplest; progress-unlock
 // is a later one-line swap). All 10 pieces of day N reveal together (batch).
-const dayRevealAt = (sagaStartedAt, day) => sagaStartedAt + (day - 1) * DAY_MS;
+const dayRevealAt = (sagaStartedAt, day) => sagaStartedAt + (day - 1) * DAY_SEC;
 
 async function podFetch(url, secret, payload) {
   return fetch(url, {
@@ -60,12 +60,21 @@ async function pickStock(env, { arc, wardrobePhase, bucket, gender }) {
   }
   if (!row) {
     // gender fallback: any arc+phase clip whose bucket starts with the gender
+    // (e.g. 'f%' matches 'f_jungle_test', 'f_long_brown_wavy_fair', etc.).
     row = await env.DB.prepare(
       `SELECT id, r2_key, pose_r2_key, mask_r2_key FROM stock_library
         WHERE active = 1 AND arc = ? AND wardrobe_phase = ?
           AND appearance_bucket LIKE ?
         ORDER BY RANDOM() LIMIT 1`
-    ).bind(arc, wardrobePhase, `${gender}\\_%`).first().catch(() => null);
+    ).bind(arc, wardrobePhase, `${gender}%`).first().catch(() => null);
+  }
+  if (!row) {
+    // last resort: ANY active clip for this arc+phase (ignore bucket entirely)
+    row = await env.DB.prepare(
+      `SELECT id, r2_key, pose_r2_key, mask_r2_key FROM stock_library
+        WHERE active = 1 AND arc = ? AND wardrobe_phase = ?
+        ORDER BY RANDOM() LIMIT 1`
+    ).bind(arc, wardrobePhase).first().catch(() => null);
   }
   return row;
 }
@@ -110,9 +119,13 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
   // Source selfie → temp public copy keyed by pieceId (cleaned on callback).
   const sel = await env.SELFIES.get(user.primary_selfie_r2_key);
   if (!sel) { await markFailed(env, pieceId, 'selfie_missing'); return; }
-  const tmpKey = `stock/_src_${pieceId}.jpg`;
+  // Must match the public-stock route's allowed temp pattern: _welcome_src_<uuid>.jpg
+  // (handlePublicStockFile 404s any other underscore-prefixed name). pieceId is a
+  // UUID, so this matches. Bonus: the /api/swap/complete callback already cleans
+  // up `stock/_welcome_src_<id>.jpg`, so our temp selfies get garbage-collected.
+  const tmpKey = `stock/_welcome_src_${pieceId}.jpg`;
   await env.STOCK.put(tmpKey, sel.body, { httpMetadata: { contentType: 'image/jpeg' } });
-  const sourceImageUrl = `${API}/public/stock/_src_${pieceId}.jpg`;
+  const sourceImageUrl = `${API}/public/stock/_welcome_src_${pieceId}.jpg`;
 
   const secret = env.SWAP_POD_SECRET;
   const base = env.SWAP_POD_URL.replace(/\/+$/, '');
@@ -170,7 +183,7 @@ async function markFailed(env, pieceId, reason) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatch every piece of one day (10 pieces). reveal_at = that day's start.
-async function dispatchDay(env, user, day) {
+export async function dispatchDay(env, user, day) {
   const dayDef = (arcManifest.days || {})[String(day)];
   if (!dayDef) { console.warn('[storytime] no manifest for day', day); return 0; }
   const revealAt = dayRevealAt(user.saga_started_at, day);

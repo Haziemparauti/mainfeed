@@ -90,11 +90,15 @@ PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILLA2lhnTAxCvp2g6pLC5uWAui1+pEJU
 #     A6000  48GB $0.33/hr  ← supply variable
 #     A5000  24GB $0.16/hr  ← cheapest but often sold out
 if [ "$CLOUD_TYPE" = "COMMUNITY" ]; then
+  # 48GB-only for the dual-pipeline test (DreamID-V swap + Flux must co-reside).
+  # 24GB cards (3090/4090/A5000) can't hold both — dropped from the ladder.
   GPU_FALLBACK=(
-    "${1:-NVIDIA GeForce RTX 3090}"
-    "NVIDIA GeForce RTX 4090"
-    "NVIDIA RTX A6000"
-    "NVIDIA RTX A5000"
+    "${1:-NVIDIA RTX A6000}"
+    "NVIDIA A40"
+    "NVIDIA L40"
+    "NVIDIA L40S"
+    "NVIDIA RTX 6000 Ada Generation"
+    "NVIDIA A100 80GB PCIe"
   )
 else
   GPU_FALLBACK=(
@@ -104,8 +108,6 @@ else
     "NVIDIA L40"
     "NVIDIA RTX 6000 Ada Generation"
     "NVIDIA A100 80GB PCIe"
-    "NVIDIA GeForce RTX 4090"
-    "NVIDIA GeForce RTX 3090"
   )
 fi
 
