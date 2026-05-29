@@ -182,19 +182,23 @@ function renderDayView(day, pieces) {
       <button class="mf-day-back" data-day-back>‹ All chapters</button>
       <div class="mf-day-title">${escapeHtml(_shareName)} · DAY ${day}</div>
     </div>
-    <div class="mf-day-pieces">${pieces.map(pieceCard).join('')}</div>`;
+    <div class="mf-day-pieces">${pieces.map((p, i) => pieceCard(p, i, pieces.length)).join('')}</div>`;
 }
 
-function pieceCard(p) {
+function pieceCard(p, i, total) {
   const isImage = p.type === 'image';
   const media = isImage
     ? `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`
     : `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`;
   const caption = String(p.caption || '').trim();
+  // Subtle 1→N sequence counter (Instagram-carousel style), top-right of the stage,
+  // so each chapter reads beginning→end.
+  const num = (Number.isInteger(i) && Number.isInteger(total))
+    ? `<span class="mf-piece-num">${i + 1}<span class="mf-piece-num-sep">/</span>${total}</span>` : '';
   // Clean media in-feed (no burned bug). The monologue is in-app caption text.
   return `
     <article class="mf-piece" data-id="${p.id}" data-type="${p.type}" data-url="${API}${p.file_url}">
-      <div class="mf-piece-stage">${media}</div>
+      <div class="mf-piece-stage">${media}${num}</div>
       ${caption ? `<p class="mf-piece-caption">${escapeHtml(caption)}</p>` : ''}
       <div class="mf-piece-actions">
         <button class="mf-piece-action" data-piece-action="download" data-id="${p.id}">Download</button>

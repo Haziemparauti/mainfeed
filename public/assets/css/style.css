@@ -1073,11 +1073,28 @@ body.mf-app {
 .mf-day-pieces { display: flex; flex-direction: column; gap: 18px; }
 .mf-day-loading { text-align: center; padding: 48px 16px; color: var(--text-mute); }
 
-/* In-app caption (the monologue — NEVER burned into media) */
+/* In-app caption (the monologue — NEVER burned into media). Instagram-style
+   card body: white text on solid black, NOT on the brand gradient (which the
+   bare .mf-piece background is — it's meant to be only the 2px ring). The black
+   here meets the black .mf-piece-actions below it for one continuous dark card. */
 .mf-piece-caption {
-  margin: 0; padding: 12px 14px 2px;
-  font: 500 16px/1.4 system-ui, -apple-system, "Inter", sans-serif; color: var(--text);
+  margin: 0; padding: 13px 16px 13px;
+  font: 500 15.5px/1.45 system-ui, -apple-system, "Inter", sans-serif;
+  color: #f4f4f6;
+  background: #000;
 }
+
+/* Subtle 1→N chapter-sequence counter, pinned top-right of the media stage. */
+.mf-piece-num {
+  position: absolute; top: 10px; right: 10px; z-index: 3;
+  display: inline-flex; align-items: baseline;
+  font: 700 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.04em; color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  padding: 5px 9px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.mf-piece-num-sep { opacity: 0.55; margin: 0 2px; font-weight: 500; }
 
 /* Saga baking / loading state */
 .mf-saga-loading { text-align: center; padding: 52px 20px; color: var(--text-mute); }
