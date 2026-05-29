@@ -1544,6 +1544,7 @@ export default {
     if (method === 'GET' && path === '/api/saga/days') return handleSagaDays(request, env, origin);
     if (method === 'GET' && path === '/api/saga/day') return handleSagaDay(request, env, origin);
     if (method === 'POST' && path === '/api/admin/rebake-day') return handleAdminRebakeDay(request, env, origin);
+    if (method === 'POST' && path === '/api/admin/reswap-piece') return handleAdminReswapPiece(request, env, origin);
 
     // Piece (file stream, delete, publish toggle)
     const pieceFileMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)\/file$/);
@@ -2210,6 +2211,78 @@ async function handleAdminSwapQueue(request, env, origin) {
     callback_url: callbackUrl,
     output_r2_key: outputR2Key,
     pod_response: podJson || podText.slice(0, 400),
+  }, {}, origin);
+}
+
+// POST /api/admin/reswap-piece — re-render an EXISTING piece IN PLACE: swap the
+// owner's face onto a given stock clip at a chosen size/frame_num, overwriting
+// the piece's R2 file. The piece keeps its arc/day/scene/caption/reveal_at
+// tagging — only the video bytes change. Used to drop a real arc clip (e.g. a
+// true 1:1 jungle video) onto a piece that was baked against placeholder stock.
+// Status is NOT touched here: the piece stays visible (old file) until the pod's
+// callback flips it ready with the new bytes; a hard-refresh shows the new clip.
+// Body: { piece_id, stock_key (filename in STOCK), size?, frame_num? }
+async function handleAdminReswapPiece(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  const body = await request.json().catch(() => ({}));
+  const pieceId = String(body.piece_id || '').trim();
+  const stockName = String(body.stock_key || '').trim().replace(/[^A-Za-z0-9_.-]/g, '_');
+  const size = typeof body.size === 'string' ? body.size : '832*480';
+  const frameNum = Number.isFinite(body.frame_num) ? Number(body.frame_num) : 81;
+  if (!pieceId || !stockName) return errResp('missing_fields', 400, origin, { hint: 'need piece_id + stock_key' });
+
+  const piece = await env.DB.prepare(
+    'SELECT id, user_id, r2_key, type FROM generated_pieces WHERE id = ? AND deleted_at IS NULL'
+  ).bind(pieceId).first();
+  if (!piece) return errResp('piece_not_found', 404, origin);
+
+  const user = await env.DB.prepare(
+    'SELECT id, handle, primary_selfie_r2_key FROM users WHERE id = ? AND deleted_at IS NULL'
+  ).bind(piece.user_id).first();
+  if (!user || !user.primary_selfie_r2_key) return errResp('user_or_selfie_missing', 404, origin);
+
+  const stockKey = `stock/${stockName}`;
+  if (!(await env.STOCK.head(stockKey))) return errResp('stock_not_found', 404, origin, { stock_key: stockKey });
+
+  // Stage the owner's selfie as a public temp file (same convention as the bake;
+  // /api/swap/complete deletes stock/_welcome_src_<piece.id>.jpg on callback).
+  const sel = await env.SELFIES.get(user.primary_selfie_r2_key);
+  if (!sel) return errResp('selfie_object_missing', 404, origin);
+  await env.STOCK.put(`stock/_welcome_src_${piece.id}.jpg`, sel.body, { httpMetadata: { contentType: 'image/jpeg' } });
+
+  const payload = {
+    request_id: piece.id,                                        // callback flips THIS piece
+    source_image_url: `https://api.mainfeed.app/public/stock/_welcome_src_${piece.id}.jpg`,
+    target_video_url: `https://api.mainfeed.app/public/stock/${stockName}`,
+    target_pose_url: null,
+    target_mask_url: null,
+    callback_url: 'https://api.mainfeed.app/api/swap/complete',
+    output_r2_key: piece.r2_key,                                 // overwrite in place
+    sample_steps: 16,
+    sample_guide_scale_img: 4.0,
+    size,
+    frame_num: frameNum,
+    handle: user.handle,
+  };
+
+  const podUrl = env.SWAP_POD_URL.replace(/\/+$/, '') + '/swap';
+  let res;
+  try {
+    res = await fetchPodWithRetry(podUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.SWAP_POD_SECRET}` },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    return errResp('pod_unreachable', 502, origin, { detail: String(err).slice(0, 400) });
+  }
+  const podText = await res.text().catch(() => '');
+  let podJson = null; try { podJson = JSON.parse(podText); } catch (_) { /* keep text */ }
+  if (!res.ok) return errResp(`pod_${res.status}`, 502, origin, { pod_response: podJson || podText.slice(0, 400) });
+
+  return json({
+    ok: true, piece_id: piece.id, output_r2_key: piece.r2_key, size, frame_num: frameNum,
+    pod_response: podJson || podText.slice(0, 200),
   }, {}, origin);
 }
 
