@@ -1,0 +1,54 @@
+{
+  "arc": "jungle_survival",
+  "share_name": "LOST",
+  "total_days": 30,
+  "pieces_per_day": 10,
+  "format_mix": { "video": 3, "gif": 3, "image": 4 },
+  "wardrobe_phases": {
+    "1": {
+      "days": "1-5",
+      "name": "Survivor in business clothes",
+      "iconic": "torn white button-up shirt (untucked, top two buttons missing), grey suit trousers ripped at the hems, barefoot",
+      "hair": "shoulder-length, tousled",
+      "dirt_by_day": { "1": "clean", "2": "light dirt on collar + cuffs", "3": "visible smudges, scuffed knees", "4": "noticeably muddy, sleeves rolled", "5": "heavily smudged + soot, one sleeve torn" }
+    }
+  },
+  "days": {
+    "1": {
+      "title": "I wake up here",
+      "arc_beat": "Disorientation → realization it's real → calling out → no answer → settling in for the first night, terrified.",
+      "pieces": [
+        { "scene": 1, "format": "video", "wardrobe_phase": 1, "block": "dawn", "location": "the_waking_spot", "is_cliffhanger": 0,
+          "prompt": "Cinematic 1:1 square, slow push-in on {subject} lying on the jungle floor at dawn, eyes slowly fluttering open, dense leaf canopy above, pink-gold light filtering through, torn white button-up shirt and grey suit trousers (clean), barefoot, shoulder-length tousled hair, dazed and disoriented, shallow depth of field, teal-and-gold grade, hyperreal",
+          "caption": "Where… where am I?" },
+        { "scene": 2, "format": "gif", "wardrobe_phase": 1, "block": "dawn", "location": "the_waking_spot", "is_cliffhanger": 0,
+          "prompt": "1:1 square, {subject} sitting bolt upright on the jungle floor, hand pressed to forehead, wincing, looking around disoriented, soft dawn light, torn white shirt + grey trousers (clean), a massive mossy fallen log behind, short reaction loop",
+          "caption": "Oh god. My head." },
+        { "scene": 3, "format": "image", "wardrobe_phase": 1, "block": "mid-morning", "location": "the_waking_spot", "is_cliffhanger": 0,
+          "prompt": "1:1 square, high wide shot looking down on {subject} sitting small in a jungle clearing surrounded by ferns, a massive mossy fallen log beside them, three slim palm trees, soft mid-morning light, torn white shirt + grey trousers, barefoot, looking down at their own hands",
+          "caption": "This isn't my bed. This isn't anywhere I know." },
+        { "scene": 4, "format": "image", "wardrobe_phase": 1, "block": "mid-morning", "location": "the_lookout", "is_cliffhanger": 0,
+          "prompt": "1:1 square, {subject} standing on a rocky outcrop above the canopy, distant ocean barely visible on the horizon, one hand shading eyes, mid-morning sun, torn white shirt + grey trousers, windblown hair, dawning realization",
+          "caption": "Ocean. I can see ocean. So… I'm on an island?" },
+        { "scene": 5, "format": "video", "wardrobe_phase": 1, "block": "midday", "location": "jungle", "is_cliffhanger": 0,
+          "prompt": "Cinematic 1:1 square, {subject} cupping both hands around mouth and shouting into the dense jungle, turning desperately, harsh midday light shafting through the canopy, torn white shirt + grey trousers (faint dirt), one continuous take",
+          "caption": "HELLO?! IS ANYONE THERE?!" },
+        { "scene": 6, "format": "gif", "wardrobe_phase": 1, "block": "midday", "location": "jungle", "is_cliffhanger": 0,
+          "prompt": "1:1 square, {subject} walking through ferns then FREEZING mid-step, head tilting to listen, eyes darting, sudden stillness, dappled midday light, torn white shirt + grey trousers, short tense loop",
+          "caption": "What was that?" },
+        { "scene": 7, "format": "image", "wardrobe_phase": 1, "block": "afternoon", "location": "the_waking_spot", "is_cliffhanger": 0,
+          "prompt": "1:1 square, {subject} sitting on a fallen log with knees pulled to chest, looking absurdly out of place in office work clothes amid the lush jungle, warm afternoon light, torn white shirt + grey trousers, hollow thousand-yard stare",
+          "caption": "I had a meeting at ten. I had a meeting." },
+        { "scene": 8, "format": "video", "wardrobe_phase": 1, "block": "evening", "location": "the_waking_spot", "is_cliffhanger": 0,
+          "prompt": "Cinematic 1:1 square, {subject} crouched at the base of a tree gathering large leaves into a pile for a bed, working with tired focus, orange-purple light fading through the canopy, torn white shirt + grey trousers (light dirt), one continuous take",
+          "caption": "Just for tonight. I just need to get through tonight." },
+        { "scene": 9, "format": "gif", "wardrobe_phase": 1, "block": "night", "location": "the_waking_spot", "is_cliffhanger": 0,
+          "prompt": "1:1 square, {subject} curled on a pile of leaves in deep blue twilight, eyes SNAPPING open at a sudden sound, body tensing, breath catching, torn white shirt collar visible, short startled loop",
+          "caption": "What was THAT." },
+        { "scene": 10, "format": "image", "wardrobe_phase": 1, "block": "night", "location": "the_waking_spot", "is_cliffhanger": 1,
+          "prompt": "1:1 square, extreme close-up on {subject}'s face in near-darkness, eyes wide open and afraid, knees pulled tight, faint cold moonlight, torn white shirt collar, utterly alone in the vast dark jungle",
+          "caption": "Please let me wake up. Please let this be a dream." }
+      ]
+    }
+  }
+}

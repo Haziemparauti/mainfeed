@@ -1,6 +1,8 @@
 // Mainfeed API worker — v0 backend
 // Endpoints: signup, login, logout, me, feed, diary, piece file, piece delete
 
+import { startSaga, runBaker, getSagaDays, getDayPieces } from './storytime.js';
+
 const ALLOWED_ORIGINS = new Set([
   'https://mainfeed.app',
   'https://www.mainfeed.app',
@@ -373,14 +375,21 @@ async function handleSignup(request, env, origin) {
     console.error('appearance-bucket update failed', err);
   }
 
-  // Queue the welcome VIDEO swap (DreamID-V on the RunPod pod). Don't block the
-  // signup response on the swap (~3 min); insert a 'processing' piece now and
-  // the worker's /api/swap/complete callback flips it to 'ready' when the pod
-  // finishes uploading to R2.
+  // Storytime: anchor the saga, enqueue the trial bake, and dispatch Day 1
+  // immediately so the loading bar resolves in minutes (replaces the old single
+  // welcome-video swap). The pod callbacks flip each piece processing→ready.
+  // See worker/src/storytime.js.
   try {
-    await generateWelcomeVideoSwap(env, userId, handle, gender, primarySelfieKey, appearanceBucket, ts);
+    await startSaga(env, {
+      id: userId,
+      handle,
+      gender,
+      appearance_bucket: appearanceBucket,
+      primary_selfie_r2_key: primarySelfieKey,
+      saga_started_at: ts,
+    });
   } catch (err) {
-    console.error('welcome video swap queue failed', err);
+    console.error('startSaga failed', err);
   }
 
   return json(
@@ -620,20 +629,29 @@ async function handleFeed(request, env, ctx, origin) {
     status: p.status || 'ready',
   }));
 
-  // Self-healing: if the user has zero pieces to show (welcome flow failed
-  // at signup-time due to pod flake or similar), re-queue a welcome swap in
-  // the background. ctx.waitUntil keeps the worker alive past the response
-  // so the fire-and-forget completes. Idempotent: skips if any ready or
-  // processing piece exists, or if user is > 24h old. Audit 2026-05-26.
-  if (pieces.length === 0 && ctx?.waitUntil) {
-    ctx.waitUntil(
-      maybeRetryWelcomeOnFeedOpen(env, r.session.user_id).catch((e) =>
-        console.error('[welcome-retry-on-feed-open] err', e)
-      )
-    );
-  }
+  // (Storytime) The old welcome-retry self-heal is disabled — content now comes
+  // from the pre-bake queue (startSaga + runBaker), not a single welcome swap.
+  // The Storytime feed uses /api/saga/days + /api/saga/day (handleFeed is legacy).
 
   return json({ ok: true, pieces, total: pieces.length }, {}, origin);
+}
+
+// ===== Storytime feed (arc → day → pieces) =====
+
+async function handleSagaDays(request, env, origin) {
+  const r = await requireSession(request, env, origin);
+  if (r.error) return r.error;
+  const data = await getSagaDays(env, r.session.user_id);
+  return json({ ok: true, ...data }, {}, origin);
+}
+
+async function handleSagaDay(request, env, origin) {
+  const r = await requireSession(request, env, origin);
+  if (r.error) return r.error;
+  const day = parseInt(new URL(request.url).searchParams.get('n') || '0', 10);
+  if (!day) return errResp('missing_day', 400, origin);
+  const pieces = await getDayPieces(env, r.session.user_id, day);
+  return json({ ok: true, day, pieces }, {}, origin);
 }
 
 async function handlePieceFile(request, env, origin, pieceId) {
@@ -1467,6 +1485,8 @@ async function runJanitor(env) {
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runJanitor(env));
+    // Storytime: advance the next active bake job by one day per tick.
+    ctx.waitUntil(runBaker(env));
   },
 
   async fetch(request, env, ctx) {
@@ -1493,6 +1513,10 @@ export default {
 
     // Feed
     if (method === 'GET' && path === '/api/feed') return handleFeed(request, env, ctx, origin);
+
+    // Storytime feed: arc → day list, and one day's pieces
+    if (method === 'GET' && path === '/api/saga/days') return handleSagaDays(request, env, origin);
+    if (method === 'GET' && path === '/api/saga/day') return handleSagaDay(request, env, origin);
 
     // Piece (file stream, delete, publish toggle)
     const pieceFileMatch = path.match(/^\/api\/piece\/([A-Za-z0-9_-]+)\/file$/);

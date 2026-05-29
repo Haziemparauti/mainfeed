@@ -152,10 +152,15 @@ class SwapRequest(BaseModel):
     size: str = "832*480"   # DreamID-V uses asterisk-separated W*H
     base_seed: int = 42
     frame_num: Optional[int] = None  # default determined by DreamID-V if None
-    # Caption + user handle drive the post-swap burn-in step. If both are
-    # null the burn-in is a no-op and the raw swap output is uploaded.
+    # Watermark "context bug" inputs: handle → mainfeed.app/@handle, arc_name →
+    # the share-name on the bug (e.g. "LOST"), day → DAY N. If handle is null
+    # the burn-in is a no-op and the raw swap output is uploaded.
+    # NOTE: `caption` (the monologue) is NO LONGER burned in — it ships to the
+    # feed as in-app text. Kept here (optional, ignored) only for back-compat.
     caption: Optional[str] = None
     handle: Optional[str] = None
+    arc_name: Optional[str] = None
+    day: Optional[int] = None
 
 
 class ImageRequest(BaseModel):
@@ -180,9 +185,12 @@ class ImageRequest(BaseModel):
     id_weight: float = 1.0          # PuLID identity injection strength
     start_step: int = 0             # 0 = inject ID from first denoise step
     base_seed: int = 42
-    # User handle drives the watermark burn-in. If null the raw Flux output
-    # is uploaded (no watermark).
+    # Watermark "context bug" inputs (handle → mainfeed.app/@handle, arc_name →
+    # share-name e.g. "LOST", day → DAY N). If handle is null the raw Flux
+    # output is uploaded (no watermark).
     handle: Optional[str] = None
+    arc_name: Optional[str] = None
+    day: Optional[int] = None
     # 24 GB cards (3090, 4090) can't hold the 24 GB Flux model + ~2 GB
     # workspace at once — set aggressive_offload=true to shuttle Flux
     # transformer blocks CPU↔GPU one-at-a-time during denoise. Slower
@@ -556,28 +564,10 @@ async def run_image(req: ImageRequest) -> None:
                 req.aggressive_offload,
             )
 
-        # Watermark-only burn-in (NO captions per [[feedback_three_formats_are_distinct]]
-        # — captions are video-format-only). brand_image uses PIL alpha-composite
-        # (no ffmpeg) since the input is a single JPEG. If handle is null,
-        # brand_image is a no-op.
-        burn_started = time.time()
-        try:
-            branded = await asyncio.get_event_loop().run_in_executor(
-                None, brand_image, output, workdir, req.handle,
-            )
-            if branded != output:
-                burn_elapsed = round(time.time() - burn_started, 2)
-                print(f"[swap_server] {req.request_id} image burn-in OK in {burn_elapsed}s "
-                      f"({branded.stat().st_size} bytes)", flush=True)
-                output = branded
-        except Exception as burn_err:
-            print(f"[swap_server] {req.request_id} image burn-in FAILED, uploading raw: {burn_err}",
-                  flush=True)
-
-        # Upload JPEG via worker proxy. Reuses /api/swap/upload (worker's R2
-        # write path is content-type agnostic; it just streams the body to R2
-        # under the prefix-restricted key). content_type=image/jpeg drives the
-        # R2 object's stored MIME so feed clients render it correctly.
+        # Watermark "context bug" is intentionally NOT burned here — the in-app
+        # feed shows CLEAN images; the bug is applied only on download/share
+        # (render_overlay.brand_image, via the download path). `output` is the
+        # raw Flux render. content_type=image/jpeg drives the R2 object's MIME.
         r2_meta = await upload_via_worker(output, r2_key, "image/jpeg")
         print(f"[swap_server] {req.request_id} image → r2://{r2_meta['bucket']}/{r2_meta['key']} ({r2_meta['size']} bytes)", flush=True)
 
@@ -622,7 +612,22 @@ async def run_swap(req: SwapRequest) -> None:
     try:
         await download_to(req.source_image_url, src_image)
         await download_to(req.target_video_url, ref_video)
-        # pose/mask are ignored for the FASTER variant; keep schema for compat
+        # DWPose cache: if the caller passes precomputed pose+mask URLs, drop
+        # them exactly where dreamidv_runtime.run_swap looks
+        # (workdir/temp_generated/{base}_pose.mp4 + {base}_mask.mp4) so it SKIPS
+        # the ~30s inline DWPose pass. The pose+mask are computed ONCE per stock
+        # clip at library time and cached in R2, then reused on every user's
+        # swap of that clip. Quality-identical — the mask is the same whether
+        # computed inline now or precomputed earlier; this only removes
+        # redundant recomputation. If either URL is absent, run_swap falls back
+        # to computing DWPose inline (unchanged behavior).
+        if req.target_pose_url and req.target_mask_url:
+            base = ref_video.stem  # "target" → matches dreamidv_runtime's video_base
+            temp_dir = workdir / "temp_generated"
+            await download_to(req.target_pose_url, temp_dir / f"{base}_pose.mp4")
+            await download_to(req.target_mask_url, temp_dir / f"{base}_mask.mp4")
+            print(f"[swap_server] {req.request_id} DWPose cache HIT — downloaded "
+                  f"precomputed pose+mask, skipping inline DWPose (~30s saved)", flush=True)
         async with STATE.gpu_lock:
             output = await run_dreamidv(
                 workdir, src_image, ref_video,
@@ -630,27 +635,11 @@ async def run_swap(req: SwapRequest) -> None:
                 req.size, req.base_seed, req.frame_num,
             )
 
-        # Burn caption + watermark into the video frames so the file you
-        # download from your feed and upload to TikTok/IG carries the brand.
-        # No-op if neither caption nor handle was provided.
-        burn_started = time.time()
-        try:
-            branded = await asyncio.get_event_loop().run_in_executor(
-                None, brand_video, output, workdir, req.handle, req.caption,
-            )
-            if branded != output:
-                burn_elapsed = round(time.time() - burn_started, 2)
-                print(f"[swap_server] {req.request_id} burn-in OK in {burn_elapsed}s "
-                      f"({branded.stat().st_size} bytes)", flush=True)
-                output = branded
-        except Exception as burn_err:
-            # Failure here is non-fatal — fall back to the un-branded swap so
-            # the user still sees their video. Log it loudly so we can fix.
-            print(f"[swap_server] {req.request_id} burn-in FAILED, uploading raw swap: {burn_err}",
-                  flush=True)
-
-        # Upload output mp4 via the worker proxy. Pod never holds R2 creds —
-        # worker writes to R2 on the pod's behalf via Cloudflare binding.
+        # The watermark "context bug" is intentionally NOT burned here. The
+        # in-app feed shows CLEAN media; the bug is applied ONLY when a piece is
+        # downloaded/shared (render_overlay.brand_video, invoked by the download
+        # path) — keeping the in-app experience watermark-free. `output` is the
+        # raw swap. Pod never holds R2 creds — worker writes on its behalf.
         r2_meta = await upload_via_worker(output, r2_key, "video/mp4")
         print(f"[swap_server] {req.request_id} → r2://{r2_meta['bucket']}/{r2_meta['key']} ({r2_meta['size']} bytes)", flush=True)
 

@@ -36,7 +36,7 @@ let currentUser = null;
     const me = await meRes.json();
     currentUser = me.user;
     paintMe(currentUser);
-    await loadFeed();
+    await loadDays();
   } catch (err) {
     console.error('boot error', err);
     window.location.href = '/login.html';
@@ -98,101 +98,116 @@ $('#mf-menu-logout')?.addEventListener('click', async (e) => {
   window.location.href = '/';
 });
 
-// ============ Feed ============
+// ============ Storytime feed (arc → day list → day view) ============
 
-let _feedPollTimer = null;
+let _sagaPollTimer = null;
+let _openDay = null;      // null = day-list view; N = viewing day N
+let _shareName = 'LOST';
 
-// Track how many ready pieces we've shown so we can detect when new ones land.
-let _lastReadyCount = 0;
-
-async function loadFeed() {
+async function loadDays() {
   const feed = $('#mf-feed');
   if (!feed) return;
-  const res = await fetch(`${API}/api/feed`, { credentials: 'include' });
+  const res = await fetch(`${API}/api/saga/days`, { credentials: 'include' });
   if (res.status === 401) return showError('not_authenticated');
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return showError(data.error);
-  // Backend already filters to status='ready' (2026-05-26 — user explicitly
-  // doesn't want to see processing/failed states surface in the feed).
-  const pieces = data.pieces || [];
-  renderFeed(pieces);
+  _shareName = data.share_name || 'LOST';
+  renderDayList(data.days || []);
 
-  // Quiet background polling so newly-rendered pieces appear without a manual
-  // refresh. 20s cadence balances freshness against API load.
-  if (_feedPollTimer) clearTimeout(_feedPollTimer);
-  _feedPollTimer = setTimeout(loadFeed, 20000);
-  _lastReadyCount = pieces.length;
+  // While Day 1 is still baking (nothing open yet), poll faster so it pops in
+  // automatically when the pod finishes. Once a day is open, stop polling.
+  if (_sagaPollTimer) clearTimeout(_sagaPollTimer);
+  const anyOpen = (data.days || []).some((d) => d.open);
+  if (_openDay === null && !anyOpen) _sagaPollTimer = setTimeout(loadDays, 8000);
 }
 
-function renderFeed(pieces) {
+function renderDayList(days) {
   const feed = $('#mf-feed');
-  if (pieces.length === 0) {
+
+  // No days yet → the saga is baking. Loading state.
+  if (days.length === 0) {
     feed.innerHTML = `
-      <div class="mf-feed-empty">
-        <h2>Your Mainfeed is empty</h2>
-        <p>Your first piece is on its way.</p>
+      <div class="mf-saga-loading">
+        <div class="mf-saga-spinner"></div>
+        <h2>Your story is being created…</h2>
+        <p>Day 1 of <b>${escapeHtml(_shareName)}</b> is rendering. This takes a few minutes — it will appear here on its own.</p>
+        <div class="mf-progress"><div class="mf-progress-bar"></div></div>
       </div>`;
     return;
   }
-  feed.innerHTML = pieces.map(pieceCard).join('');
+
+  feed.innerHTML = `
+    <section class="mf-arc-hero">
+      <div class="mf-arc-kicker">YOUR STORY</div>
+      <h1 class="mf-arc-title">${escapeHtml(_shareName)}</h1>
+      <p class="mf-arc-sub">A 30-day saga — one chapter a day, starring you.</p>
+    </section>
+    <div class="mf-eplist">${days.map(dayRow).join('')}</div>`;
+}
+
+function dayRow(d) {
+  const locked = !d.open;
+  const meta = locked ? (d.ready > 0 ? 'Available soon' : 'Locked') : `${d.ready} pieces`;
+  const right = locked
+    ? `<span class="mf-ep-icon mf-ep-icon--lock" aria-hidden="true">🔒</span>`
+    : `<span class="mf-ep-icon mf-ep-icon--play" aria-hidden="true">▶</span>`;
+  const title = d.title ? ` · ${escapeHtml(d.title)}` : '';
+  return `
+    <button class="mf-ep${locked ? ' mf-ep--locked' : ''}" data-day="${d.day}" ${locked ? 'disabled' : ''}>
+      <span class="mf-ep-num">${d.day}</span>
+      <span class="mf-ep-body">
+        <span class="mf-ep-title">Day ${d.day}${title}</span>
+        <span class="mf-ep-meta">${meta}</span>
+      </span>
+      ${right}
+    </button>`;
+}
+
+async function openDay(day) {
+  _openDay = day;
+  if (_sagaPollTimer) { clearTimeout(_sagaPollTimer); _sagaPollTimer = null; }
+  const feed = $('#mf-feed');
+  feed.innerHTML = `<div class="mf-day-loading">Loading Day ${day}…</div>`;
+  const res = await fetch(`${API}/api/saga/day?n=${day}`, { credentials: 'include' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return showError(data.error);
+  renderDayView(day, data.pieces || []);
+  window.scrollTo(0, 0);
+}
+
+function renderDayView(day, pieces) {
+  const feed = $('#mf-feed');
+  feed.innerHTML = `
+    <div class="mf-day-head">
+      <button class="mf-day-back" data-day-back>‹ All chapters</button>
+      <div class="mf-day-title">${escapeHtml(_shareName)} · DAY ${day}</div>
+    </div>
+    <div class="mf-day-pieces">${pieces.map(pieceCard).join('')}</div>`;
 }
 
 function pieceCard(p) {
-  // Backend now only returns status='ready' pieces — processing + failed
-  // never reach the user. (Kept the conditional guard defensive in case the
-  // backend ever sends one through.)
-  if (p.status && p.status !== 'ready') return '';
-  const caption = String(p.caption || '').trim();
   const isImage = p.type === 'image';
-  const mediaTag = isImage
+  const media = isImage
     ? `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`
     : `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`;
-  const pubText = p.public ? 'Unpublish' : 'Publish';
-  const pubClass = p.public ? 'mf-piece-action mf-piece-action--active' : 'mf-piece-action';
-  // The `mf-piece--image` modifier gates the 3D wobble + glass sheen CSS in
-  // style.css. NEVER applied to video/GIF pieces — they have their own motion
-  // from autoplay and additional effects compete with it.
-  const pieceClass = isImage ? 'mf-piece mf-piece--image' : 'mf-piece';
-  // Caption + watermark are BURNED INTO the video by the pod (see
-  // pod/render_overlay.py). No HTML overlays — what you see in-feed is
-  // exactly what you get when you download or share. data-caption is kept
-  // for the image-only canvas-baking path below.
+  const caption = String(p.caption || '').trim();
+  // Clean media in-feed (no burned bug). The monologue is in-app caption text.
   return `
-    <article class="${pieceClass}" data-id="${p.id}" data-type="${p.type}" data-caption="${escapeHtml(caption)}" data-url="${API}${p.file_url}" data-public="${p.public ? '1' : '0'}">
-      <div class="mf-piece-stage">
-        ${mediaTag}
-      </div>
+    <article class="mf-piece" data-id="${p.id}" data-type="${p.type}" data-url="${API}${p.file_url}">
+      <div class="mf-piece-stage">${media}</div>
+      ${caption ? `<p class="mf-piece-caption">${escapeHtml(caption)}</p>` : ''}
       <div class="mf-piece-actions">
         <button class="mf-piece-action" data-piece-action="download" data-id="${p.id}">Download</button>
         <button class="mf-piece-action" data-piece-action="share" data-id="${p.id}">Share</button>
-        <button class="${pubClass}" data-piece-action="publish-toggle" data-id="${p.id}">${pubText}</button>
       </div>
-    </article>
-  `;
+    </article>`;
 }
 
-// ============ Content-mode selector ============
-// Three cards under the header: Just Me / Storytime / Fantasy. State-only
-// today — switching the active card doesn't yet filter the feed (no per-piece
-// mode-classifier on the backend). When that lands, this is where the
-// `loadFeed()` call gets a `?mode=<active>` query param.
-
-let _currentMode = 'just-me';
-
+// Day navigation: open a day, or go back to the chapter list.
 document.addEventListener('click', (e) => {
-  const btn = e.target.closest('.mf-mode');
-  if (!btn) return;
-  const mode = btn.dataset.mode;
-  if (!mode || mode === _currentMode) return;
-  _currentMode = mode;
-  document.querySelectorAll('.mf-mode').forEach((el) => {
-    const isActive = el.dataset.mode === mode;
-    el.classList.toggle('mf-mode--active', isActive);
-    el.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-  });
-  // No re-render yet — the feed shows the same pieces regardless of mode.
-  // When backend mode-filtering lands, call loadFeed() here with the new
-  // mode in a query param.
+  const ep = e.target.closest('.mf-ep:not(.mf-ep--locked)');
+  if (ep && ep.dataset.day) { openDay(parseInt(ep.dataset.day, 10)); return; }
+  if (e.target.closest('[data-day-back]')) { _openDay = null; loadDays(); return; }
 });
 
 // ============ Piece actions ============

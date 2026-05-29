@@ -99,9 +99,13 @@ if [ "$CLOUD_TYPE" = "COMMUNITY" ]; then
 else
   GPU_FALLBACK=(
     "${1:-NVIDIA A40}"
-    "NVIDIA GeForce RTX 3090"
     "NVIDIA RTX A6000"
+    "NVIDIA L40S"
+    "NVIDIA L40"
+    "NVIDIA RTX 6000 Ada Generation"
+    "NVIDIA A100 80GB PCIe"
     "NVIDIA GeForce RTX 4090"
+    "NVIDIA GeForce RTX 3090"
   )
 fi
 
@@ -160,6 +164,13 @@ EXTRA_ENV=""
 # injected — the worker handles R2 access via its env.CONTENT binding.
 EXTRA_ENV="$EXTRA_ENV, {key: \\\"HARDEN_WEIGHTS_R2\\\", value: \\\"1\\\"}"
 echo "  R2 weight-mirror fast-path enabled (worker proxy, no R2 creds on pod)"
+
+# torch.compile on the DreamID-V DiT — +14% steady-state, quality-NEUTRAL
+# (validated 2026-05-27, mode="default"). Was locked in dreamidv_runtime.py but
+# defaulted OFF because this env flag was never set on production pods. Default
+# ON now; `export DREAMIDV_TORCH_COMPILE=0` before this script to A/B vs eager.
+EXTRA_ENV="$EXTRA_ENV, {key: \\\"DREAMIDV_TORCH_COMPILE\\\", value: \\\"${DREAMIDV_TORCH_COMPILE:-1}\\\"}"
+echo "  torch.compile=${DREAMIDV_TORCH_COMPILE:-1} (DiT +14%, quality-neutral)"
 
 for GPU_TYPE in "${GPU_FALLBACK[@]}"; do
   printf "  trying %-30s ... " "$GPU_TYPE"

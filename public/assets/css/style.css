@@ -1021,6 +1021,87 @@ body.mf-app {
   margin: 0;
 }
 
+/* ============ Storytime feed: arc hero + Netflix day list + day view ============ */
+
+.mf-arc-hero { padding: 18px 4px 22px; text-align: left; }
+.mf-arc-kicker {
+  font: 700 11px/1 system-ui, sans-serif; letter-spacing: 0.22em;
+  color: var(--accent); margin-bottom: 8px;
+}
+.mf-arc-title {
+  font: 800 40px/0.98 Impact, "Anton", system-ui, sans-serif; letter-spacing: 0.01em;
+  background: var(--accent-grad); -webkit-background-clip: text; background-clip: text;
+  color: transparent; margin: 0 0 6px;
+}
+.mf-arc-sub { font-size: 14px; color: var(--text-mute); margin: 0; }
+
+/* Netflix-style episode (day) rows */
+.mf-eplist { display: flex; flex-direction: column; gap: 10px; }
+.mf-ep {
+  display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+  padding: 14px 16px; background: var(--surface);
+  border: 1px solid rgba(255,255,255,0.07); border-radius: var(--radius);
+  color: var(--text); cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.mf-ep:not(.mf-ep--locked):hover { background: var(--surface-2); border-color: var(--accent); }
+.mf-ep:not(.mf-ep--locked):active { transform: scale(0.99); }
+.mf-ep-num {
+  flex: none; width: 40px; height: 40px; display: grid; place-items: center;
+  font: 800 18px/1 Impact, "Anton", system-ui, sans-serif; border-radius: 12px;
+  background: var(--accent-grad); color: #00131f;
+}
+.mf-ep-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.mf-ep-title { font: 600 15px/1.2 system-ui, sans-serif; color: var(--text); }
+.mf-ep-meta { font-size: 12.5px; color: var(--text-mute); }
+.mf-ep-icon { flex: none; font-size: 15px; opacity: 0.8; }
+.mf-ep-icon--play { color: var(--accent-2); }
+.mf-ep--locked { opacity: 0.5; cursor: default; }
+.mf-ep--locked .mf-ep-num { background: var(--surface-2); color: var(--text-mute); }
+
+/* Day view */
+.mf-day-head { display: flex; align-items: center; gap: 12px; padding: 6px 2px 16px; }
+.mf-day-back {
+  background: none; border: 0; color: var(--accent);
+  font: 600 14px/1 system-ui, sans-serif; cursor: pointer; padding: 6px 4px;
+}
+.mf-day-title {
+  font: 700 13px/1 Impact, "Anton", system-ui, sans-serif; letter-spacing: 0.12em;
+  color: var(--text-mute); margin-left: auto;
+}
+.mf-day-pieces { display: flex; flex-direction: column; gap: 18px; }
+.mf-day-loading { text-align: center; padding: 48px 16px; color: var(--text-mute); }
+
+/* In-app caption (the monologue — NEVER burned into media) */
+.mf-piece-caption {
+  margin: 0; padding: 12px 14px 2px;
+  font: 500 16px/1.4 system-ui, -apple-system, "Inter", sans-serif; color: var(--text);
+}
+
+/* Saga baking / loading state */
+.mf-saga-loading { text-align: center; padding: 52px 20px; color: var(--text-mute); }
+.mf-saga-loading h2 { font-size: 20px; font-weight: 700; color: var(--text); margin: 18px 0 8px; }
+.mf-saga-loading p { font-size: 14px; max-width: 320px; margin: 0 auto 20px; }
+.mf-saga-spinner {
+  width: 44px; height: 44px; margin: 0 auto; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.12); border-top-color: var(--accent);
+  animation: mf-spin 0.9s linear infinite;
+}
+@keyframes mf-spin { to { transform: rotate(360deg); } }
+.mf-progress {
+  width: 200px; max-width: 70%; height: 6px; margin: 0 auto;
+  background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden;
+}
+.mf-progress-bar {
+  height: 100%; width: 40%; border-radius: 999px; background: var(--accent-grad);
+  animation: mf-progress-slide 1.6s ease-in-out infinite;
+}
+@keyframes mf-progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
 /* ============ Content-mode selector ============
    Three full-width cards sitting under the header, above the feed. State-only
    for now — `data-mode` is read by app.js to update visual state. Backend
