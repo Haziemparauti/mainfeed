@@ -2242,8 +2242,8 @@ async function handleAdminReswapPiece(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   const pieceId = String(body.piece_id || '').trim();
   const stockName = String(body.stock_key || '').trim().replace(/[^A-Za-z0-9_.-]/g, '_');
-  const size = typeof body.size === 'string' ? body.size : '832*480';
-  const frameNum = Number.isFinite(body.frame_num) ? Number(body.frame_num) : 81;
+  const size = typeof body.size === 'string' ? body.size : '512*512';
+  const frameNum = Number.isFinite(body.frame_num) ? Number(body.frame_num) : 121;
   if (!pieceId || !stockName) return errResp('missing_fields', 400, origin, { hint: 'need piece_id + stock_key' });
 
   const piece = await env.DB.prepare(

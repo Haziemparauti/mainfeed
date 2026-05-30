@@ -49,33 +49,27 @@ async function podFetch(url, secret, payload) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Stock selection (loose v1: arc + wardrobe_phase + bucket). Returns the row or
 // null. Falls back to gender-only (bucket prefix) if no bucket-exact match.
-async function pickStock(env, { arc, wardrobePhase, bucket, gender }) {
-  let row = null;
-  if (bucket) {
-    row = await env.DB.prepare(
-      `SELECT id, r2_key, pose_r2_key, mask_r2_key FROM stock_library
-        WHERE active = 1 AND arc = ? AND wardrobe_phase = ? AND appearance_bucket = ?
-        ORDER BY RANDOM() LIMIT 1`
-    ).bind(arc, wardrobePhase, bucket).first();
-  }
-  if (!row) {
-    // gender fallback: any arc+phase clip whose bucket starts with the gender
-    // (e.g. 'f%' matches 'f_jungle_test', 'f_long_brown_wavy_fair', etc.).
-    row = await env.DB.prepare(
-      `SELECT id, r2_key, pose_r2_key, mask_r2_key FROM stock_library
-        WHERE active = 1 AND arc = ? AND wardrobe_phase = ?
-          AND appearance_bucket LIKE ?
-        ORDER BY RANDOM() LIMIT 1`
-    ).bind(arc, wardrobePhase, `${gender}%`).first().catch(() => null);
-  }
-  if (!row) {
-    // last resort: ANY active clip for this arc+phase (ignore bucket entirely)
-    row = await env.DB.prepare(
-      `SELECT id, r2_key, pose_r2_key, mask_r2_key FROM stock_library
-        WHERE active = 1 AND arc = ? AND wardrobe_phase = ?
-        ORDER BY RANDOM() LIMIT 1`
-    ).bind(arc, wardrobePhase).first().catch(() => null);
-  }
+async function pickStock(env, { arc, wardrobePhase, scene, bucket, gender }) {
+  // SCENE-ACCURATE: the manifest's scene MUST map to a clip tagged with THAT
+  // scene — never a different scene's clip (wrong action = broken story = the
+  // moat sinks). We loosen only the appearance match (exact bucket → same gender
+  // → any), and NEVER the scene. No clip tagged to this scene → null → the piece
+  // fails cleanly (invisible in the feed) instead of swapping the wrong beat.
+  const base =
+    `SELECT id, r2_key, pose_r2_key, mask_r2_key FROM stock_library
+      WHERE active = 1 AND arc = ? AND wardrobe_phase = ? AND scene = ?`;
+  // 1) exact appearance bucket
+  let row = bucket ? await env.DB.prepare(
+    `${base} AND appearance_bucket = ? ORDER BY RANDOM() LIMIT 1`
+  ).bind(arc, wardrobePhase, scene, bucket).first().catch(() => null) : null;
+  // 2) same gender (bucket prefix 'm…' / 'f…')
+  if (!row) row = await env.DB.prepare(
+    `${base} AND appearance_bucket LIKE ? ORDER BY RANDOM() LIMIT 1`
+  ).bind(arc, wardrobePhase, scene, `${gender}%`).first().catch(() => null);
+  // 3) any clip for this exact scene (bucket-agnostic — embrace-the-mismatch)
+  if (!row) row = await env.DB.prepare(
+    `${base} ORDER BY RANDOM() LIMIT 1`
+  ).bind(arc, wardrobePhase, scene).first().catch(() => null);
   return row;
 }
 
@@ -145,9 +139,9 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
       });
     } else {
       const stock = await pickStock(env, {
-        arc: ARC, wardrobePhase, bucket: user.appearance_bucket, gender,
+        arc: ARC, wardrobePhase, scene: piece.scene, bucket: user.appearance_bucket, gender,
       });
-      if (!stock) { await markFailed(env, pieceId, 'no_stock_for_arc_phase'); return; }
+      if (!stock) { await markFailed(env, pieceId, `no_stock_for_scene_${piece.scene}`); return; }
       res = await podFetch(`${base}/swap`, secret, {
         request_id: pieceId,
         source_image_url: sourceImageUrl,
@@ -159,10 +153,14 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
         callback_url: `${API}/api/swap/complete`,
         output_r2_key: r2Key,
         sample_steps: 16, sample_guide_scale_img: 4.0,
-        // TEST: proven config (832*480, 3s). Square 1024² + 5s (frame_num 120)
-        // are unvalidated on this model — validate on the hot pod, then switch.
-        size: '832*480',
-        frame_num: piece.format === 'gif' ? 37 : 81,
+        // LOCKED format: 1:1 square @ 512² (720² dial-up if soft). 24fps export →
+        // video frame_num 121 (=4·30+1, true 5.0s) swaps the WHOLE clip so the
+        // reaction beat (which lands at the END of each Seedance shot) isn't
+        // truncated. 5s/121 is past Wan's ~81-frame trained window — the Day-1
+        // test eyeballs identity hold over the back half; if it drifts, trim
+        // toward ~4s (frame_num 97). gif stays a short reaction loop.
+        size: '512*512',
+        frame_num: piece.format === 'gif' ? 37 : 121,
         handle: user.handle, arc_name: ARC_SHARE, day,
       });
     }
