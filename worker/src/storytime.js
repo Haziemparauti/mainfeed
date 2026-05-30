@@ -225,38 +225,60 @@ export async function startSaga(env, user) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Called from the scheduled (cron) handler alongside the janitor. Advances the
-// active bake job by ONE day per tick (10 pieces) to avoid flooding the pod.
+// Called from the scheduled (cron) handler alongside the janitor. Dispatches at
+// most ONE day per tick (10 pieces) across all active jobs, to avoid flooding
+// the pod. A job stays 'running' from enqueue until every one of its pieces has
+// RESOLVED (ready/failed) on the pod — NOT merely until its days are dispatched.
+// That window is the signal runJanitor uses to spare deep-queue pieces from
+// being reaped mid-bake (a 70-piece trial bake drains over hours of serial GPU).
 export async function runBaker(env) {
-  const job = await env.DB.prepare(
+  const jobs = (await env.DB.prepare(
     `SELECT * FROM bake_jobs WHERE status IN ('queued','running')
-      ORDER BY (priority='high') DESC, queued_at ASC LIMIT 1`
-  ).first();
-  if (!job) return;
+      ORDER BY (priority='high') DESC, queued_at ASC LIMIT 20`
+  ).all()).results || [];
 
-  const user = await env.DB.prepare(
-    `SELECT id, handle, appearance_bucket, primary_selfie_r2_key, arc, saga_started_at
-       FROM users WHERE id = ? AND deleted_at IS NULL`
-  ).bind(job.user_id).first();
-  if (!user) {
-    await env.DB.prepare(`UPDATE bake_jobs SET status='failed' WHERE id=?`).bind(job.id).run();
-    return;
-  }
-
-  // Find the next day in [day_from, day_to] not yet dispatched.
-  for (let day = job.day_from; day <= job.day_to; day++) {
-    const has = await env.DB.prepare(
-      `SELECT COUNT(*) AS c FROM generated_pieces WHERE user_id=? AND arc=? AND day=?`
-    ).bind(user.id, job.arc, day).first();
-    if ((has?.c || 0) === 0) {
-      await dispatchDay(env, { ...user, _bakeJobId: job.id }, day);
-      console.log('[storytime] runBaker dispatched day', day, 'for', user.id);
-      return; // one day per tick
+  for (const job of jobs) {
+    const user = await env.DB.prepare(
+      `SELECT id, handle, appearance_bucket, primary_selfie_r2_key, arc, saga_started_at
+         FROM users WHERE id = ? AND deleted_at IS NULL`
+    ).bind(job.user_id).first();
+    if (!user) {
+      await env.DB.prepare(`UPDATE bake_jobs SET status='failed' WHERE id=?`).bind(job.id).run();
+      continue;
     }
+
+    // Dispatch the next un-baked authored day. dispatchDay returns 0 when a day
+    // has no manifest yet (Days 2-30 unauthored) — treat that as "nothing left to
+    // bake" and fall through to the completion check rather than stalling on it.
+    let dispatched = false;
+    for (let day = job.day_from; day <= job.day_to; day++) {
+      const has = await env.DB.prepare(
+        `SELECT COUNT(*) AS c FROM generated_pieces WHERE user_id=? AND arc=? AND day=?`
+      ).bind(user.id, job.arc, day).first();
+      if ((has?.c || 0) > 0) continue;                 // already dispatched
+      const n = await dispatchDay(env, { ...user, _bakeJobId: job.id }, day);
+      if (n > 0) {
+        console.log('[storytime] runBaker dispatched day', day, 'for', user.id);
+        dispatched = true;
+        break;                                          // one real dispatch per tick
+      }
+      // n === 0 → no manifest for this day; keep scanning later days.
+    }
+    if (dispatched) return;                             // one day per tick (total)
+
+    // No authored day left to dispatch. Only retire the job once the pod has
+    // DRAINED its pieces — until then leave it 'running' so the janitor keeps
+    // sparing them. A dead pod is caught by the janitor's absolute ceiling.
+    const remaining = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM generated_pieces
+         WHERE bake_job_id=? AND status='processing'`
+    ).bind(job.id).first();
+    if ((remaining?.c || 0) === 0) {
+      await env.DB.prepare(`UPDATE bake_jobs SET status='completed', completed_at=? WHERE id=?`)
+        .bind(now(), job.id).run();
+    }
+    // else: still draining — leave 'running', check the next job this tick.
   }
-  // All days dispatched → job done.
-  await env.DB.prepare(`UPDATE bake_jobs SET status='completed', completed_at=? WHERE id=?`)
-    .bind(now(), job.id).run();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1466,26 +1466,41 @@ async function handleDiaryCreate(request, env, origin) {
 // ============ Router ============
 
 // Scheduled (cron) handler — runs every 5 min via the [triggers] block in
-// wrangler.toml. Audit 2026-05-26 H1: pieces stuck in 'processing' state
-// because the pod never callbacked (crash, OOM, network blip) were
-// previously invisible to the user (feed filters to 'ready') AND occupied
-// orphan public selfie files. This sweeps them.
+// wrangler.toml. Audit 2026-05-26 H1: pieces stuck in 'processing' because the
+// pod never callbacked (crash, OOM, network blip) are invisible to the user
+// (the feed filters to 'ready') and pin orphan public selfie files. This sweeps
+// them to 'failed'.
+//
+// 2026-05-30: gated on the bake_job so a legit deep-queue piece isn't reaped
+// mid-bake. A Storytime trial bake (70 pieces) drains over HOURS of serial GPU;
+// pieces dispatched early sit 'processing' far past 45 min while the pod works
+// toward them — perfectly healthy, must NOT be swept. So:
+//   • piece under an ACTIVE bake (job queued/running) → spared up to an 8 h
+//     absolute ceiling (dead-pod safety; a stuck job can't shield it forever).
+//   • piece with NO active bake (job completed/failed, or a legacy welcome piece
+//     with bake_job_id = NULL)                         → swept after 45 min.
+// runBaker keeps a job 'running' until its pieces RESOLVE, so 'active' tracks the
+// real drain window, not just the dispatch window.
 async function runJanitor(env) {
   // created_at is stored in SECONDS (worker now() convention) — compare in
-  // seconds, NOT against Date.now() (ms), which treats every piece as ~50,000
-  // years old and reaps it mid-bake (this silently nuked every Storytime piece
-  // each cron tick; the old welcome flow was immune only because it left
-  // created_at NULL). 45 min covers a full serial day-bake (~15 min) + backlog
-  // headroom. NOTE: the trial-week pre-bake queues ~140 pieces (hours of serial
-  // GPU) — before that ships, gate the sweep on an inactive bake_job, not wall
-  // clock, or legit deep-queue pieces will be reaped.
-  const STUCK_THRESHOLD_SEC = 45 * 60; // 45 min
-  const cutoff = Math.floor(Date.now() / 1000) - STUCK_THRESHOLD_SEC;
+  // seconds, NOT against Date.now() (ms), which would treat every piece as
+  // ~50,000 years old and reap it instantly.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const ORPHAN_SEC = 45 * 60;              // no active bake → 45 min
+  const ACTIVE_CEILING_SEC = 8 * 60 * 60;  // active bake → 8 h dead-pod backstop
+  const orphanCutoff = nowSec - ORPHAN_SEC;
+  const activeCutoff = nowSec - ACTIVE_CEILING_SEC;
   const stuck = await env.DB.prepare(
-    `SELECT id, user_id FROM generated_pieces
-     WHERE status = 'processing' AND created_at < ?
-     LIMIT 200`
-  ).bind(cutoff).all();
+    `SELECT p.id, p.user_id FROM generated_pieces p
+       LEFT JOIN bake_jobs b ON b.id = p.bake_job_id
+      WHERE p.status = 'processing'
+        AND (
+          ((b.id IS NULL OR b.status IN ('completed','failed')) AND p.created_at < ?)
+          OR
+          (b.status IN ('queued','running') AND p.created_at < ?)
+        )
+      LIMIT 200`
+  ).bind(orphanCutoff, activeCutoff).all();
 
   const rows = stuck.results || [];
   if (rows.length === 0) {
