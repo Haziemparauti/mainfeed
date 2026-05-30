@@ -7,47 +7,27 @@
   "wardrobe_phases": {
     "1": {
       "days": "1-5",
-      "name": "Survivor in business clothes",
-      "iconic": "torn white button-up shirt (untucked, top two buttons missing), grey suit trousers ripped at the hems, barefoot",
-      "hair": "shoulder-length, tousled",
-      "dirt_by_day": { "1": "clean", "2": "light dirt on collar + cuffs", "3": "visible smudges, scuffed knees", "4": "noticeably muddy, sleeves rolled", "5": "heavily smudged + soot, one sleeve torn" }
+      "name": "Everyman — grey tee + jeans",
+      "iconic": "plain light-grey crew-neck short-sleeve T-shirt + classic blue jeans, barefoot",
+      "subject": "a Latino man with warm brown skin (clearly brown, not pale or white), short dark straight hair",
+      "weather": "Days 1-3 overcast, no sun, cool, not dark; warms from Day 4"
     }
   },
   "days": {
     "1": {
       "title": "I wake up here",
-      "arc_beat": "Disorientation → realization it's real → calling out → no answer → settling in for the first night, terrified.",
+      "arc_beat": "Wake -> confusion -> explore -> first clue (the paper) -> false-hope light -> dead-end cliff -> hears something -> terror.",
       "pieces": [
-        { "scene": 1, "format": "video", "wardrobe_phase": 1, "block": "dawn", "location": "the_waking_spot", "is_cliffhanger": 0,
-          "prompt": "Cinematic 1:1 square, slow push-in on {subject} lying on the jungle floor at dawn, eyes slowly fluttering open, dense leaf canopy above, pink-gold light filtering through, torn white button-up shirt and grey suit trousers (clean), barefoot, shoulder-length tousled hair, dazed and disoriented, shallow depth of field, teal-and-gold grade, hyperreal",
-          "caption": "Where… where am I?" },
-        { "scene": 2, "format": "gif", "wardrobe_phase": 1, "block": "dawn", "location": "the_waking_spot", "is_cliffhanger": 0,
-          "prompt": "1:1 square, {subject} sitting bolt upright on the jungle floor, hand pressed to forehead, wincing, looking around disoriented, soft dawn light, torn white shirt + grey trousers (clean), a massive mossy fallen log behind, short reaction loop",
-          "caption": "Oh god. My head." },
-        { "scene": 3, "format": "image", "wardrobe_phase": 1, "block": "mid-morning", "location": "the_waking_spot", "is_cliffhanger": 0,
-          "prompt": "1:1 square, high wide shot looking down on {subject} sitting small in a jungle clearing surrounded by ferns, a massive mossy fallen log beside them, three slim palm trees, soft mid-morning light, torn white shirt + grey trousers, barefoot, looking down at their own hands",
-          "caption": "This isn't my bed. This isn't anywhere I know." },
-        { "scene": 4, "format": "image", "wardrobe_phase": 1, "block": "mid-morning", "location": "the_lookout", "is_cliffhanger": 0,
-          "prompt": "1:1 square, {subject} standing on a rocky outcrop above the canopy, distant ocean barely visible on the horizon, one hand shading eyes, mid-morning sun, torn white shirt + grey trousers, windblown hair, dawning realization",
-          "caption": "Ocean. I can see ocean. So… I'm on an island?" },
-        { "scene": 5, "format": "video", "wardrobe_phase": 1, "block": "midday", "location": "jungle", "is_cliffhanger": 0,
-          "prompt": "Cinematic 1:1 square, {subject} cupping both hands around mouth and shouting into the dense jungle, turning desperately, harsh midday light shafting through the canopy, torn white shirt + grey trousers (faint dirt), one continuous take",
-          "caption": "HELLO?! IS ANYONE THERE?!" },
-        { "scene": 6, "format": "gif", "wardrobe_phase": 1, "block": "midday", "location": "jungle", "is_cliffhanger": 0,
-          "prompt": "1:1 square, {subject} walking through ferns then FREEZING mid-step, head tilting to listen, eyes darting, sudden stillness, dappled midday light, torn white shirt + grey trousers, short tense loop",
-          "caption": "What was that?" },
-        { "scene": 7, "format": "image", "wardrobe_phase": 1, "block": "afternoon", "location": "the_waking_spot", "is_cliffhanger": 0,
-          "prompt": "1:1 square, {subject} sitting on a fallen log with knees pulled to chest, looking absurdly out of place in office work clothes amid the lush jungle, warm afternoon light, torn white shirt + grey trousers, hollow thousand-yard stare",
-          "caption": "I had a meeting at ten. I had a meeting." },
-        { "scene": 8, "format": "video", "wardrobe_phase": 1, "block": "evening", "location": "the_waking_spot", "is_cliffhanger": 0,
-          "prompt": "Cinematic 1:1 square, {subject} crouched at the base of a tree gathering large leaves into a pile for a bed, working with tired focus, orange-purple light fading through the canopy, torn white shirt + grey trousers (light dirt), one continuous take",
-          "caption": "Just for tonight. I just need to get through tonight." },
-        { "scene": 9, "format": "gif", "wardrobe_phase": 1, "block": "night", "location": "the_waking_spot", "is_cliffhanger": 0,
-          "prompt": "1:1 square, {subject} curled on a pile of leaves in deep blue twilight, eyes SNAPPING open at a sudden sound, body tensing, breath catching, torn white shirt collar visible, short startled loop",
-          "caption": "What was THAT." },
-        { "scene": 10, "format": "image", "wardrobe_phase": 1, "block": "night", "location": "the_waking_spot", "is_cliffhanger": 1,
-          "prompt": "1:1 square, extreme close-up on {subject}'s face in near-darkness, eyes wide open and afraid, knees pulled tight, faint cold moonlight, torn white shirt collar, utterly alone in the vast dark jungle",
-          "caption": "Please let me wake up. Please let this be a dream." }
+        { "scene": 1, "format": "gif", "wardrobe_phase": 1, "no_swap": true, "caption": "", "prompt": "(scenery cold-open: stormy grey jungle island in a churning ocean; NO person; shared no-swap clip)" },
+        { "scene": 2, "format": "video", "wardrobe_phase": 1, "frame_num": 121, "caption": "Where... where am I?", "prompt": "(swap clip: the wake — overhead push-in, lying flat, gasps awake)" },
+        { "scene": 3, "format": "gif", "wardrobe_phase": 1, "frame_num": 57, "caption": "My head... what happened to me?", "prompt": "(swap clip: seated, dazed, rubbing temple, looking around)" },
+        { "scene": 4, "format": "image", "wardrobe_phase": 1, "caption": "Jungle. Everywhere. How far does this even go?", "prompt": "1:1 cinematic. High aerial drone view looking down at a Latino man with warm brown skin (clearly brown, not pale or white), short dark straight hair, plain light-grey crew-neck short-sleeve T-shirt, classic blue jeans, barefoot, standing alone in a small clearing and tilting his head up toward the camera, face clearly visible and sharp. He is dwarfed by an immense dense tropical jungle stretching endlessly around and below him; vast green canopy, palms, ferns, no animals. Soft flat overcast daylight, no sun, cool, not dark, light mist. Epic scale, hyperrealistic, 8K." },
+        { "scene": 5, "format": "gif", "wardrobe_phase": 1, "frame_num": 109, "caption": "Hello?! Is anyone out here?!", "prompt": "(swap clip: walking toward camera through jungle, scanning, confused)" },
+        { "scene": 6, "format": "video", "wardrobe_phase": 1, "frame_num": 93, "caption": "What is this...? Who wrote this?", "prompt": "(swap clip: notices, picks up, reads the shredded paper, confused)" },
+        { "scene": 7, "format": "image", "wardrobe_phase": 1, "caption": "There -- light. Maybe that's a way out.", "prompt": "1:1 cinematic. A Latino man with warm brown skin (clearly brown, not pale or white), short dark straight hair, plain light-grey crew-neck short-sleeve T-shirt, classic blue jeans, barefoot, stands in dense dark tropical jungle and steps toward a bright glowing OPENING -- a gap in the thick dark foliage ahead where pale bright overcast daylight (and a hint of distant sea) shines through, much brighter than the gloomy jungle around him. He is turned three-quarter toward the opening, face clearly visible and lit by the bright light, eyes widening with dawning hope. Strong contrast between dark green jungle and the glowing gap, no sun, no golden light, cool tones, soft mist, no animals. Shallow depth of field keeping his face sharp, hyperrealistic, 8K." },
+        { "scene": 8, "format": "image", "wardrobe_phase": 1, "caption": "No. No, no... it's just ocean. There's nothing.", "prompt": "1:1 cinematic. A Latino man with warm brown skin (clearly brown, not pale or white), short dark straight hair, plain light-grey crew-neck short-sleeve T-shirt, classic blue jeans, barefoot, stands at the edge of a high rocky cliff with a confused, shocked look, face visible. Far below and around him the vast grey storm-churned sea crashes on the rocks -- a dizzying drop, big waves, white foam; dense tropical jungle behind him. Soft flat overcast daylight, no sun, cool, not dark, wind in his clothes. Strong sense of height and exposure, hyperrealistic, 8K." },
+        { "scene": 9, "format": "video", "wardrobe_phase": 1, "frame_num": 121, "caption": "HELP! Somebody-- ...wait. What was that?", "prompt": "(swap clip: side-on, yells at sea, turns around, stares into the jungle)" },
+        { "scene": 10, "format": "image", "wardrobe_phase": 1, "is_cliffhanger": 1, "caption": "...what the hell was that?!", "prompt": "1:1 cinematic. Medium close-up of a Latino man with warm brown skin (clearly brown, not pale or white), short dark straight hair, plain light-grey crew-neck short-sleeve T-shirt, at a cliff edge with dark tropical jungle behind him. He has just turned to look back and his face is frozen in pure shock and fear -- eyes wide, mouth open -- the look of 'what the hell is that?!'. Soft flat overcast daylight, no sun, cool desaturated tones, not dark, tense, ominous. Face sharp and prominent, hyperrealistic, 8K." }
       ]
     }
   }

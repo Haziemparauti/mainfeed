@@ -110,6 +110,19 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
     ts, ARC, day, piece.scene, wardrobePhase, revealAt, bakeJobId,
   ).run();
 
+  // No-swap scenery piece (e.g. the cold-open island): no face in it → no pod
+  // swap. Copy the scene's shared stock clip straight into this piece's output
+  // and mark it ready. Same clip for every user; instant at signup.
+  if (piece.no_swap) {
+    const sc = await pickStock(env, { arc: ARC, wardrobePhase, scene: piece.scene, bucket: user.appearance_bucket, gender });
+    if (!sc) { await markFailed(env, pieceId, `no_stock_for_scene_${piece.scene}`); return; }
+    const obj = await env.STOCK.get(sc.r2_key);
+    if (!obj) { await markFailed(env, pieceId, 'noswap_stock_missing'); return; }
+    await env.CONTENT.put(r2Key, obj.body, { httpMetadata: { contentType: isImage ? 'image/jpeg' : 'video/mp4' } });
+    await env.DB.prepare(`UPDATE generated_pieces SET status='ready' WHERE id=?`).bind(pieceId).run();
+    return;
+  }
+
   // Source selfie → temp public copy keyed by pieceId (cleaned on callback).
   const sel = await env.SELFIES.get(user.primary_selfie_r2_key);
   if (!sel) { await markFailed(env, pieceId, 'selfie_missing'); return; }
@@ -160,7 +173,7 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
         // test eyeballs identity hold over the back half; if it drifts, trim
         // toward ~4s (frame_num 97). gif stays a short reaction loop.
         size: '512*512',
-        frame_num: piece.format === 'gif' ? 37 : 121,
+        frame_num: Number.isFinite(piece.frame_num) ? piece.frame_num : (piece.format === 'gif' ? 37 : 121),
         handle: user.handle, arc_name: ARC_SHARE, day,
       });
     }
