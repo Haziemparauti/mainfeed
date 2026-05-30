@@ -406,7 +406,7 @@
         const target = total > 0 ? (ready / total) * 100 : 0;
         if (shown < target) shown = Math.min(target, shown + 0.5);
         fill.style.width = (done ? 100 : Math.min(99, shown)).toFixed(1) + '%';
-        pctEl.textContent = ready + ' / ' + total + ' ready';
+        pctEl.textContent = Math.round(done ? 100 : Math.min(99, shown)) + '%';
         if (done) {
           etaEl.textContent = 'your story is ready';
         } else {
@@ -434,7 +434,7 @@
 
       clearInterval(tick);
       fill.style.width = '100%';
-      pctEl.textContent = (ready || total) + ' / ' + total + ' ready';
+      pctEl.textContent = '100%';
       etaEl.textContent = 'your story is ready';
       await new Promise((r) => setTimeout(r, 700));
     }
