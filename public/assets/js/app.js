@@ -103,6 +103,13 @@ $('#mf-menu-logout')?.addEventListener('click', async (e) => {
 let _sagaPollTimer = null;
 let _openDay = null;      // null = day-list view; N = viewing day N
 let _shareName = 'LOST';
+// Day view: Story (one piece, 30s auto-advance) vs Feed (scrollable 1→N).
+let _dayPieces = [];
+let _dayNum = null;
+let _view = 'feed';        // 'feed' | 'story'  (default Feed = the existing scroll view)
+let _storyIndex = 0;
+let _storyTimer = null;
+const STORY_MS = 30000;    // each piece shows for 30s in Story view
 
 async function loadDays() {
   const feed = $('#mf-feed');
@@ -176,13 +183,100 @@ async function openDay(day) {
 }
 
 function renderDayView(day, pieces) {
+  _dayPieces = pieces;
+  _dayNum = day;
+  _storyIndex = 0;
   const feed = $('#mf-feed');
   feed.innerHTML = `
     <div class="mf-day-head">
       <button class="mf-day-back" data-day-back>‹ All chapters</button>
       <div class="mf-day-title">${escapeHtml(_shareName)} · DAY ${day}</div>
     </div>
-    <div class="mf-day-pieces">${pieces.map((p, i) => pieceCard(p, i, pieces.length)).join('')}</div>`;
+    <div class="mf-viewtoggle" role="tablist">
+      <button class="mf-viewtoggle-btn" data-view="story" role="tab">▶ Story view</button>
+      <button class="mf-viewtoggle-btn" data-view="feed" role="tab">☰ Feed view</button>
+    </div>
+    <div class="mf-view-container"></div>`;
+  renderView();
+}
+
+// Render whichever view is active into .mf-view-container + sync the toggle.
+function renderView() {
+  const c = $('.mf-view-container');
+  if (!c) return;
+  document.querySelectorAll('.mf-viewtoggle-btn').forEach((b) =>
+    b.classList.toggle('mf-viewtoggle-btn--active', b.dataset.view === _view));
+  stopStory();
+  if (_view === 'story') { renderStory(); return; }
+  c.innerHTML = `<div class="mf-day-pieces">${_dayPieces.map((p, i) => pieceCard(p, i, _dayPieces.length)).join('')}</div>`;
+}
+
+function setView(v) {
+  if (v === _view || (v !== 'story' && v !== 'feed')) return;
+  _view = v;
+  renderView();
+}
+
+// ---- Story view: one piece at a time, 30s each, auto-advance, smooth fades ----
+function renderStory() {
+  const c = $('.mf-view-container');
+  if (!c) return;
+  _storyIndex = Math.max(0, Math.min(_storyIndex, _dayPieces.length - 1));
+  const p = _dayPieces[_storyIndex];
+  if (!p) { c.innerHTML = ''; return; }
+  const total = _dayPieces.length;
+  const media = p.type === 'image'
+    ? `<img class="mf-story-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`
+    : `<video class="mf-story-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`;
+  const caption = String(p.caption || '').trim();
+  c.innerHTML = `
+    <div class="mf-story">
+      <div class="mf-story-stage">
+        ${media}
+        <span class="mf-piece-num">${_storyIndex + 1}<span class="mf-piece-num-sep">/</span>${total}</span>
+      </div>
+      ${caption ? `<p class="mf-story-caption">${escapeHtml(caption)}</p>` : ''}
+      <div class="mf-story-progress"><div class="mf-story-progress-bar"></div></div>
+      <div class="mf-story-nav">
+        <button class="mf-story-btn" data-story-nav="back" ${_storyIndex === 0 ? 'disabled' : ''}>‹ Back</button>
+        <button class="mf-story-btn" data-story-nav="next" ${_storyIndex >= total - 1 ? 'disabled' : ''}>Next ›</button>
+      </div>
+    </div>`;
+  startStoryTimer();
+}
+
+// Animate the 30s progress bar, then auto-advance (stops on the last piece).
+function startStoryTimer() {
+  stopStory();
+  const bar = $('.mf-story-progress-bar');
+  if (bar) {
+    bar.style.transition = 'none';
+    bar.style.width = '0%';
+    void bar.offsetWidth;                       // reflow so 0% sticks before animating
+    bar.style.transition = `width ${STORY_MS}ms linear`;
+    bar.style.width = '100%';
+  }
+  _storyTimer = setTimeout(() => {
+    if (_storyIndex < _dayPieces.length - 1) storyGo(_storyIndex + 1);
+  }, STORY_MS);
+}
+
+function stopStory() {
+  if (_storyTimer) { clearTimeout(_storyTimer); _storyTimer = null; }
+}
+
+// Fade the current piece out, swap to idx, fade the new one in (CSS handles both).
+function storyGo(idx) {
+  if (idx < 0 || idx >= _dayPieces.length) return;
+  stopStory();
+  const story = $('.mf-story');
+  if (story) {
+    story.classList.add('mf-story--fading');
+    setTimeout(() => { _storyIndex = idx; renderStory(); }, 280);
+  } else {
+    _storyIndex = idx;
+    renderStory();
+  }
 }
 
 function pieceCard(p, i, total) {
@@ -211,7 +305,11 @@ function pieceCard(p, i, total) {
 document.addEventListener('click', (e) => {
   const ep = e.target.closest('.mf-ep:not(.mf-ep--locked)');
   if (ep && ep.dataset.day) { openDay(parseInt(ep.dataset.day, 10)); return; }
-  if (e.target.closest('[data-day-back]')) { _openDay = null; loadDays(); return; }
+  if (e.target.closest('[data-day-back]')) { stopStory(); _openDay = null; loadDays(); return; }
+  const vt = e.target.closest('[data-view]');
+  if (vt) { setView(vt.dataset.view); return; }
+  const sn = e.target.closest('[data-story-nav]');
+  if (sn) { storyGo(_storyIndex + (sn.dataset.storyNav === 'next' ? 1 : -1)); return; }
 });
 
 // ============ Piece actions ============
