@@ -1587,6 +1587,7 @@ export default {
     // Admin: stock library batch generation + download
     if (method === 'POST' && path === '/api/admin/batch-gen-stock') return handleAdminBatchGenStock(request, env, origin);
     if (method === 'POST' && path === '/api/admin/stock/collect') return handleAdminStockCollect(request, env, origin);
+    if (method === 'POST' && path === '/api/admin/stock/ingest') return handleAdminStockIngest(request, env, origin);
     if (method === 'POST' && path === '/api/admin/stock/wipe-scenario') return handleAdminStockWipeScenario(request, env, origin);
     if (method === 'GET' && path === '/api/admin/stock/list') return handleAdminStockList(request, env, origin);
     const stockFileMatch = path.match(/^\/api\/admin\/stock\/file\/([A-Za-z0-9_.-]+)$/);
@@ -1911,6 +1912,102 @@ async function handleAdminStockCollect(request, env, origin) {
       return { filename, status: 'failed', error: String(err).slice(0, 200) };
     }
   }));
+  return json({ ok: true, results }, {}, origin);
+}
+
+// POST /api/admin/stock/ingest — register EXTERNAL clips (method A: user renders
+// them in fal.ai, hands us the output URLs) into the stock library, fully
+// SCENE-TAGGED so the bake's scene-accurate pickStock can find them. This is the
+// method-A counterpart to /stock/collect (which is the built-in Fal submit/collect
+// flow, method B, and does NOT set arc/wardrobe_phase/scene).
+//
+// Body: { items: [ {
+//   source_url,         // https URL of the rendered clip (e.g. a fal.media .mp4) — fetched server-side
+//   filename,           // -> stock/<filename>.mp4 (sanitized); also the idempotency key
+//   arc,                // 'jungle_survival'           (REQUIRED)
+//   scene,              // 1..10                        (REQUIRED — this is what makes pickStock scene-accurate)
+//   wardrobe_phase,     // 1..6
+//   gender,             // 'm' | 'f' | 'unisex'
+//   appearance_bucket?, // e.g. 'm_jungle_test' (pickStock: exact bucket -> gender-prefix -> any)
+//   duration?, width?, height?, mood?, scenario?, composition?, tags?
+// }, ... ] }
+//
+// Per item: idempotent on filename; fetches source_url (https, <=100MB), R2-puts to
+// stock/<filename>.mp4, inserts a fully-tagged stock_library row (type='video',
+// active=1). Stock clips are always mp4 — a clip used by a GIF-format piece is still
+// type 'video' here; the manifest scene number decides which piece consumes it.
+async function handleAdminStockIngest(request, env, origin) {
+  if (!checkAdmin(request, env)) return errResp('unauthorized', 401, origin);
+  const body = await request.json().catch(() => ({}));
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (items.length === 0) return errResp('empty', 400, origin, {
+    hint: 'body: { items: [ { source_url, filename, arc, scene, wardrobe_phase, gender, appearance_bucket? } ] }',
+  });
+  if (items.length > 50) return errResp('batch_too_large', 400, origin);
+  const MAX_BYTES = 100 * 1024 * 1024;
+
+  const results = await Promise.all(items.map(async (it) => {
+    const filename = String(it.filename || '').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 100);
+    const sourceUrl = String(it.source_url || '').trim();
+    const arc = String(it.arc || '').trim();
+    const scene = Number(it.scene);
+    if (!filename || !sourceUrl) return { filename, status: 'failed', error: 'missing source_url/filename' };
+    if (!/^https:\/\//i.test(sourceUrl)) return { filename, status: 'failed', error: 'source_url must be https' };
+    if (!arc || !Number.isFinite(scene)) return { filename, status: 'failed', error: 'missing arc/scene' };
+
+    // Idempotency: skip if this filename is already in the library.
+    try {
+      const existing = await env.DB.prepare(
+        `SELECT id FROM stock_library WHERE filename = ? LIMIT 1`
+      ).bind(filename).first();
+      if (existing) return { filename, status: 'already_ingested', stock_id: existing.id };
+    } catch (_) { /* continue */ }
+
+    try {
+      const resp = await fetch(sourceUrl);
+      if (!resp.ok) return { filename, status: 'failed', error: `fetch_${resp.status}` };
+      const ct = resp.headers.get('Content-Type') || '';
+      const cl = parseInt(resp.headers.get('Content-Length') || '0', 10);
+      if (Number.isFinite(cl) && cl > MAX_BYTES) return { filename, status: 'failed', error: 'too_large' };
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      if (buf.length === 0) return { filename, status: 'failed', error: 'empty_body' };
+      if (buf.length > MAX_BYTES) return { filename, status: 'failed', error: 'too_large' };
+      if (!ct.startsWith('video/') && !sourceUrl.toLowerCase().includes('.mp4')) {
+        return { filename, status: 'failed', error: `not_video (${ct})` };
+      }
+
+      const r2Key = `stock/${filename}.mp4`;
+      await env.STOCK.put(r2Key, buf, { httpMetadata: { contentType: 'video/mp4' } });
+
+      const stockId = uid();
+      const ts = now();
+      await env.DB.prepare(
+        `INSERT INTO stock_library
+           (id, r2_key, type, source, source_id, duration, width, height,
+            mood, scenario, composition, tags, face_track_data, active, created_at,
+            gender, variant, filename, captions, face_swap_needed, use_for,
+            appearance_bucket, arc, wardrobe_phase, scene)
+         VALUES (?, ?, 'video', 'fal-external', ?, ?, ?, ?,
+                 ?, ?, ?, ?, NULL, 1, ?,
+                 ?, 1, ?, '', 1, 'storytime',
+                 ?, ?, ?, ?)`
+      ).bind(
+        stockId, r2Key, sourceUrl.slice(0, 300),
+        Number(it.duration) || null, Number(it.width) || null, Number(it.height) || null,
+        String(it.mood || ''), String(it.scenario || ''), String(it.composition || 'mid'),
+        Array.isArray(it.tags) ? it.tags.join(',') : String(it.tags || ''),
+        ts,
+        String(it.gender || 'unisex'), filename,
+        it.appearance_bucket != null ? String(it.appearance_bucket) : null,
+        arc, Number(it.wardrobe_phase) || null, scene,
+      ).run();
+
+      return { filename, status: 'ingested', stock_id: stockId, r2_key: r2Key, bytes: buf.length, arc, scene };
+    } catch (err) {
+      return { filename, status: 'failed', error: String(err).slice(0, 200) };
+    }
+  }));
+
   return json({ ok: true, results }, {}, origin);
 }
 
