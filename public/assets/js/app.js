@@ -109,7 +109,7 @@ let _dayNum = null;
 let _view = 'feed';        // 'feed' | 'story'  (default Feed = the existing scroll view)
 let _storyIndex = 0;
 let _storyTimer = null;
-const STORY_MS = 30000;    // each piece shows for 30s in Story view
+const STORY_MS = 20000;    // each piece shows for 20s in Story view
 
 async function loadDays() {
   const feed = $('#mf-feed');

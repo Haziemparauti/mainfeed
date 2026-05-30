@@ -147,6 +147,11 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
         callback_url: `${API}/api/swap/complete`,
         output_r2_key: r2Key,
         width: 1024, height: 1024, num_steps: 4,   // Flux.1-schnell turbo, native
+        // Per-piece PuLID tuning (manifest): lower id_weight + later start_step
+        // let the COMPOSITION/pose win over PuLID's front-face pull (fixes
+        // "always looking at camera" + bent necks). Defaults match the pod.
+        id_weight: Number.isFinite(piece.id_weight) ? piece.id_weight : 1.0,
+        start_step: Number.isFinite(piece.start_step) ? piece.start_step : 0,
         // arc_name/day carried for the download-brand path (bake uploads clean)
         handle: user.handle, arc_name: ARC_SHARE, day,
       });
