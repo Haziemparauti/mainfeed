@@ -662,10 +662,21 @@ async function handleAdminRebakeDay(request, env, origin) {
   const handle = String(body.handle || '').toLowerCase().trim();
   const day = parseInt(body.day || 0, 10);
   if (!handle || !day) return errResp('missing_fields', 400, origin);
+  // Optional: re-bake only specific scenes (keep the approved ones). e.g. {scenes:[4,10]}
+  const scenes = Array.isArray(body.scenes)
+    ? body.scenes.map((s) => parseInt(s, 10)).filter(Number.isFinite) : null;
   const u = await env.DB.prepare(
     'SELECT id, handle, appearance_bucket, primary_selfie_r2_key, arc, saga_started_at FROM users WHERE handle = ? AND deleted_at IS NULL'
   ).bind(handle).first();
   if (!u) return errResp('user_not_found', 404, origin);
+  if (scenes && scenes.length) {
+    // Targeted: delete only those scenes' rows, then re-dispatch just them.
+    const ph = scenes.map(() => '?').join(',');
+    await env.DB.prepare(`DELETE FROM generated_pieces WHERE user_id = ? AND arc = ? AND day = ? AND scene IN (${ph})`)
+      .bind(u.id, u.arc, day, ...scenes).run();
+    const n = await dispatchDay(env, { ...u }, day, scenes);
+    return json({ ok: true, handle, day, scenes, redispatched: n }, {}, origin);
+  }
   await env.DB.prepare('DELETE FROM generated_pieces WHERE user_id = ? AND arc = ? AND day = ?')
     .bind(u.id, u.arc, day).run();
   await dispatchDay(env, { ...u }, day);

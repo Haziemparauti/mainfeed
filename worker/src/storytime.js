@@ -199,20 +199,25 @@ async function markFailed(env, pieceId, reason) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatch every piece of one day (10 pieces). reveal_at = that day's start.
-export async function dispatchDay(env, user, day) {
+export async function dispatchDay(env, user, day, onlyScenes = null) {
   const dayDef = (arcManifest.days || {})[String(day)];
   if (!dayDef) { console.warn('[storytime] no manifest for day', day); return 0; }
   const revealAt = dayRevealAt(user.saga_started_at, day);
   // wardrobe_phase = ceil(day/5) for the 6×5 arc structure.
   const wardrobePhase = Math.ceil(day / 5);
-  // Per-day idempotency: skip if this day was already dispatched for the user.
-  const existing = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM generated_pieces WHERE user_id = ? AND arc = ? AND day = ?`
-  ).bind(user.id, ARC, day).first();
-  if ((existing?.c || 0) > 0) return 0;
+  // Per-day idempotency: skip if this day was already dispatched — UNLESS we're
+  // targeting specific scenes (a re-bake of just those; caller deletes them first).
+  if (!onlyScenes) {
+    const existing = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM generated_pieces WHERE user_id = ? AND arc = ? AND day = ?`
+    ).bind(user.id, ARC, day).first();
+    if ((existing?.c || 0) > 0) return 0;
+  }
 
+  const want = onlyScenes ? new Set(onlyScenes) : null;
   let n = 0;
   for (const piece of dayDef.pieces) {
+    if (want && !want.has(piece.scene)) continue;
     await dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, user._bakeJobId || null);
     n++;
   }
