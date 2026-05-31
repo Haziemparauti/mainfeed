@@ -84,10 +84,16 @@ RUN pip install --no-cache-dir -r requirements.txt \
 #                              cheap at small video sizes; size 0.022 + 2.5em
 #                              letter-spacing per pod/render_overlay.py)
 #   logo-square2   (Mainfeed brand mark) — rasterized by cairosvg at startup
-RUN mkdir -p /app/assets
+RUN mkdir -p /app/assets /app/scripts
 COPY assets/Anton.ttf         /app/assets/Anton.ttf
 COPY assets/Inter-Medium.ttf  /app/assets/Inter-Medium.ttf
 COPY assets/logo-square2.svg  /app/assets/logo-square2.svg
+# Locked Day-1 title-scene assets + builder (rounded logo + trimmed wordmark;
+# the only per-user variable is @handle). See pod/scripts/make_intro.sh.
+COPY assets/logo_icon_round.png /app/assets/logo_icon_round.png
+COPY assets/wordmark.png        /app/assets/wordmark.png
+COPY scripts/make_intro.sh      /app/scripts/make_intro.sh
+RUN chmod +x /app/scripts/make_intro.sh
 
 # === Server code ===
 # swap_server.py imports dreamidv_runtime + sliding_window at startup.
