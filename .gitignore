@@ -21,3 +21,7 @@ pod/.runtime/
 *.safetensors
 *.onnx
 *.ckpt
+
+# Python bytecode + stray local stock downloads (artifacts, not source)
+__pycache__/
+/stock/
