@@ -92,8 +92,10 @@ COPY assets/logo-square2.svg  /app/assets/logo-square2.svg
 # the only per-user variable is @handle). See pod/scripts/make_intro.sh.
 COPY assets/logo_icon_round.png /app/assets/logo_icon_round.png
 COPY assets/wordmark.png        /app/assets/wordmark.png
+COPY assets/card_frame.png      /app/assets/card_frame.png
 COPY scripts/make_intro.sh      /app/scripts/make_intro.sh
-RUN chmod +x /app/scripts/make_intro.sh
+COPY scripts/make_card.sh       /app/scripts/make_card.sh
+RUN chmod +x /app/scripts/make_intro.sh /app/scripts/make_card.sh
 
 # === Server code ===
 # swap_server.py imports dreamidv_runtime + sliding_window at startup.
