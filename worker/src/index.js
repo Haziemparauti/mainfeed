@@ -2352,6 +2352,8 @@ async function handleAdminReswapPiece(request, env, origin) {
   const stockName = String(body.stock_key || '').trim().replace(/[^A-Za-z0-9_.-]/g, '_');
   const size = typeof body.size === 'string' ? body.size : '512*512';
   const frameNum = Number.isFinite(body.frame_num) ? Number(body.frame_num) : 121;
+  // long_swap: sliding-window swap for >81-frame clips (10-15s 9:16 videos).
+  const longSwap = body.long_swap === true;
   if (!pieceId || !stockName) return errResp('missing_fields', 400, origin, { hint: 'need piece_id + stock_key' });
 
   const piece = await env.DB.prepare(
@@ -2385,6 +2387,7 @@ async function handleAdminReswapPiece(request, env, origin) {
     sample_guide_scale_img: 4.0,
     size,
     frame_num: frameNum,
+    long_swap: longSwap,
     handle: user.handle,
   };
 
