@@ -143,28 +143,65 @@ function renderDayList(days) {
     return;
   }
 
+  const currentDay = (days.filter((d) => d.open).reduce((m, d) => Math.max(m, d.day), 0)) || 1;
   feed.innerHTML = `
-    <section class="mf-arc-hero">
-      <div class="mf-arc-kicker">YOUR STORY</div>
-      <h1 class="mf-arc-title">${escapeHtml(_shareName)}</h1>
-      <p class="mf-arc-sub">A 30-day saga — one chapter a day, starring you.</p>
+    <section class="mf-hero" aria-label="Your story">
+      <div class="mf-hero-inner">
+        <p class="mf-hero-line" id="mf-hero-line"></p>
+      </div>
     </section>
     <div class="mf-eplist">${days.map(dayRow).join('')}</div>`;
+  startHeroRotator(currentDay);
+}
+
+// Hero card: cycle the welcome lines with a slow fade in/out. Self-stops when
+// the feed re-renders (the #mf-hero-line node leaves the DOM).
+let _heroTimer = null;
+function heroLines(currentDay) {
+  const h = (currentUser && currentUser.handle) ? '@' + currentUser.handle : 'there';
+  const n = currentDay;
+  return [
+    `Hi <span class="mf-hero-em">${escapeHtml(h)}</span>!`,
+    `Your story is now <span class="mf-hero-em">${n} day${n === 1 ? '' : 's'}</span> in.`,
+    `You are now in the <span class="mf-hero-em">${escapeHtml(_shareName)}</span> saga.`,
+    `After 30 days, a new saga begins — <span class="mf-hero-em">starring you</span>.`,
+  ];
+}
+function startHeroRotator(currentDay) {
+  if (_heroTimer) { clearInterval(_heroTimer); _heroTimer = null; }
+  const el = $('#mf-hero-line');
+  if (!el) return;
+  const lines = heroLines(currentDay);
+  let i = 0;
+  const show = () => {
+    if (!el.isConnected) { clearInterval(_heroTimer); _heroTimer = null; return; }
+    el.innerHTML = lines[i % lines.length];
+    el.classList.add('mf-hero-line--in');
+    setTimeout(() => { if (el.isConnected) el.classList.remove('mf-hero-line--in'); }, 3700);
+    i++;
+  };
+  show();
+  _heroTimer = setInterval(show, 5400);
 }
 
 function dayRow(d) {
   const locked = !d.open;
-  const meta = locked ? (d.ready > 0 ? 'Available soon' : 'Locked') : `${d.ready} pieces`;
   const right = locked
     ? `<span class="mf-ep-icon mf-ep-icon--lock" aria-hidden="true">🔒</span>`
     : `<span class="mf-ep-icon mf-ep-icon--play" aria-hidden="true">▶</span>`;
-  const title = d.title ? ` · ${escapeHtml(d.title)}` : '';
+  // "Day N : Episode title" — no piece count. Locked future chapters show a hint.
+  const title = d.title ? `Day ${d.day} : ${escapeHtml(d.title)}` : `Day ${d.day}`;
+  const meta = locked ? (d.ready > 0 ? 'Available soon' : 'Locked') : '';
+  // Per-day background image arrives later; render the (empty) layer now so
+  // dropping in d.bg_image is a one-line change.
+  const bg = d.bg_image ? ` style="background-image:url('${encodeURI(d.bg_image)}')"` : '';
   return `
     <button class="mf-ep${locked ? ' mf-ep--locked' : ''}" data-day="${d.day}" ${locked ? 'disabled' : ''}>
+      <span class="mf-ep-bg"${bg} aria-hidden="true"></span>
       <span class="mf-ep-num">${d.day}</span>
       <span class="mf-ep-body">
-        <span class="mf-ep-title">Day ${d.day}${title}</span>
-        <span class="mf-ep-meta">${meta}</span>
+        <span class="mf-ep-title">${title}</span>
+        ${meta ? `<span class="mf-ep-meta">${meta}</span>` : ''}
       </span>
       ${right}
     </button>`;

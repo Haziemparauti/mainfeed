@@ -6,15 +6,15 @@
   <meta name="theme-color" content="#0b0b0e" />
   <title>Sign up — Mainfeed</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=27" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=27" />
+  <link rel="icon" type="image/svg+xml" href="/assets/img/logo-square2.svg?v=28" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=28" />
 </head>
 <body class="mf-auth">
 
   <header class="mf-nav">
     <a href="/" class="mf-brand">
-      <img src="/assets/img/logo-square2.svg?v=27" alt="" class="mf-brand-icon" width="36" height="36" />
-      <img src="/assets/img/logo-rect2.svg?v=27" alt="Mainfeed" class="mf-brand-mark" />
+      <img src="/assets/img/logo-square2.svg?v=28" alt="" class="mf-brand-icon" width="36" height="36" />
+      <img src="/assets/img/logo-rect2.svg?v=28" alt="Mainfeed" class="mf-brand-mark" />
     </a>
   </header>
 
@@ -150,6 +150,7 @@
         <div class="mf-progress-fill" id="mf-progress-fill"></div>
       </div>
       <div class="mf-progress-pct" id="mf-progress-pct">0%</div>
+      <div class="mf-progress-taglines" id="mf-progress-taglines" aria-live="polite"></div>
     </section>
   </main>
 
@@ -336,6 +337,30 @@
     // Single source of truth for the progress screen. Caller passes the
     // initial title; the inner phases (upload → generation → video-load)
     // update title + bar themselves.
+    // Cycling brand taglines under the loading bar — slow fade in/out.
+    const TAGLINES = [
+      'One never-ending story.',
+      'Only you are the main character.',
+      'You are the star.',
+      'A new episode of YOU — every Monday &amp; Thursday.',
+      'Your story. Starring you.',
+      '30 days. One saga. You.',
+    ];
+    let _taglineTimer = null;
+    function startTaglines() {
+      const el = document.getElementById('mf-progress-taglines');
+      if (!el || _taglineTimer) return;
+      let i = 0;
+      const show = () => {
+        el.innerHTML = TAGLINES[i % TAGLINES.length];
+        el.classList.add('mf-tagline--in');                 // slow fade in (CSS 1.5s)
+        setTimeout(() => el.classList.remove('mf-tagline--in'), 3600);  // hold, then fade out
+        i++;
+      };
+      show();
+      _taglineTimer = setInterval(show, 5200);              // 1.5s in + ~2s hold + 1.5s out
+    }
+
     function openProgressScreen(title = 'Creating your Mainfeed') {
       form.hidden = true;
       progress.hidden = true;
@@ -347,6 +372,7 @@
       const pctEl = document.getElementById('mf-progress-pct');
       fill.style.width = '0%';
       pctEl.textContent = '0%';
+      startTaglines();
       window.scrollTo({ top: 0 });
     }
     function closeProgressScreen() {

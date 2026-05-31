@@ -574,6 +574,10 @@ img, svg { display: block; max-width: 100%; }
 .mf-progress[data-step="5"] span:nth-child(-n+5) {
   background: var(--accent-grad);
 }
+/* The step-dots are a flex row, so the UA `[hidden]{display:none}` loses to
+   `.mf-progress{display:flex}` on equal specificity — the dots stayed visible
+   on the loading screen even with hidden=true. Hide them explicitly. */
+.mf-progress[hidden] { display: none !important; }
 
 /* ============ ONBOARDING ============ */
 
@@ -1023,23 +1027,46 @@ body.mf-app {
 
 /* ============ Storytime feed: arc hero + Netflix day list + day view ============ */
 
-.mf-arc-hero { padding: 18px 4px 22px; text-align: left; }
-.mf-arc-kicker {
-  font: 700 11px/1 system-ui, sans-serif; letter-spacing: 0.22em;
-  color: var(--accent); margin-bottom: 8px;
+/* Storytime hero — wide brand-gradient-bordered card with a gentle 3D wobble
+   and cycling fade-in/out lines (Hi @user / N days in / LOST saga / …). */
+.mf-hero {
+  position: relative; margin: 14px 2px 24px; border-radius: 20px; padding: 2px;
+  background: var(--accent-grad);
+  box-shadow: 0 12px 34px rgba(0,0,0,0.5), 0 0 26px rgba(76,162,181,0.28);
+  transform-style: preserve-3d; will-change: transform;
+  animation: mf-hero-wobble 7.5s ease-in-out infinite;
 }
-.mf-arc-title {
-  font: 800 40px/0.98 Impact, "Anton", system-ui, sans-serif; letter-spacing: 0.01em;
-  background: var(--accent-grad); -webkit-background-clip: text; background-clip: text;
-  color: transparent; margin: 0 0 6px;
+.mf-hero-inner {
+  border-radius: 18px; min-height: 104px; padding: 24px 22px;
+  display: grid; place-items: center; text-align: center;
+  background: linear-gradient(160deg, #0c1733 0%, #0a0a0f 72%);
 }
-.mf-arc-sub { font-size: 14px; color: var(--text-mute); margin: 0; }
+.mf-hero-line {
+  margin: 0; min-height: 46px; display: flex; align-items: center; justify-content: center;
+  font: 700 18px/1.4 system-ui, -apple-system, "Inter", sans-serif; letter-spacing: 0.01em;
+  color: #fff; text-shadow: 0 1px 10px rgba(0,0,0,0.45);
+  opacity: 0; transform: translateY(7px);
+  transition: opacity 1.4s ease, transform 1.4s ease;
+}
+.mf-hero-line.mf-hero-line--in { opacity: 1; transform: translateY(0); }
+.mf-hero-line .mf-hero-em {
+  background: linear-gradient(90deg, #7fd8e8, #ffd27f);
+  -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 800;
+}
+@keyframes mf-hero-wobble {
+  0%, 100% { transform: perspective(900px) rotateX(0deg) rotateY(0deg); }
+  25%      { transform: perspective(900px) rotateX(2deg) rotateY(-3deg); }
+  50%      { transform: perspective(900px) rotateX(0deg) rotateY(0deg); }
+  75%      { transform: perspective(900px) rotateX(-2deg) rotateY(3deg); }
+}
+@media (prefers-reduced-motion: reduce) { .mf-hero { animation: none; } }
 
 /* Netflix-style episode (day) rows */
 .mf-eplist { display: flex; flex-direction: column; gap: 10px; }
 .mf-ep {
+  position: relative; overflow: hidden;
   display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
-  padding: 14px 16px; background: var(--surface);
+  padding: 20px 16px; min-height: 78px; background: var(--surface);
   border: 1px solid rgba(255,255,255,0.07); border-radius: var(--radius);
   color: var(--text); cursor: pointer;
   transition: background .15s ease, border-color .15s ease, transform .1s ease;
@@ -1047,18 +1074,42 @@ body.mf-app {
 }
 .mf-ep:not(.mf-ep--locked):hover { background: var(--surface-2); border-color: var(--accent); }
 .mf-ep:not(.mf-ep--locked):active { transform: scale(0.99); }
+/* Keep real content above the bg-image layer + the shimmer sweep. */
+.mf-ep > .mf-ep-num, .mf-ep > .mf-ep-body, .mf-ep > .mf-ep-icon { position: relative; z-index: 2; }
+/* Per-day background image (image files added later) — faint, behind content. */
+.mf-ep-bg {
+  position: absolute; inset: 0; z-index: 0; border-radius: inherit;
+  background-size: cover; background-position: center; opacity: 0.18; pointer-events: none;
+}
+/* Premium sweep shimmer — a soft light bar crosses each card, then waits out
+   the rest of the cycle. Staggered per row so they cascade, not flash together. */
+.mf-ep::after {
+  content: ''; position: absolute; top: 0; left: 0; width: 55%; height: 100%;
+  z-index: 3; pointer-events: none; transform: translateX(-190%);
+  background: linear-gradient(110deg, transparent 0%, rgba(255,255,255,0.13) 50%, transparent 100%);
+  animation: mf-ep-sweep 6s ease-in-out infinite;
+}
+.mf-ep:nth-child(2n)::after { animation-delay: 1.4s; }
+.mf-ep:nth-child(3n)::after { animation-delay: 2.8s; }
+.mf-ep:nth-child(4n)::after { animation-delay: 4.2s; }
+@keyframes mf-ep-sweep {
+  0%   { transform: translateX(-190%); }
+  14%  { transform: translateX(330%); }
+  100% { transform: translateX(330%); }
+}
 .mf-ep-num {
   flex: none; width: 40px; height: 40px; display: grid; place-items: center;
   font: 800 18px/1 Impact, "Anton", system-ui, sans-serif; border-radius: 12px;
   background: var(--accent-grad); color: #00131f;
 }
 .mf-ep-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.mf-ep-title { font: 600 15px/1.2 system-ui, sans-serif; color: var(--text); }
+.mf-ep-title { font: 600 15.5px/1.25 system-ui, sans-serif; color: var(--text); }
 .mf-ep-meta { font-size: 12.5px; color: var(--text-mute); }
 .mf-ep-icon { flex: none; font-size: 15px; opacity: 0.8; }
 .mf-ep-icon--play { color: var(--accent-2); }
 .mf-ep--locked { opacity: 0.5; cursor: default; }
 .mf-ep--locked .mf-ep-num { background: var(--surface-2); color: var(--text-mute); }
+@media (prefers-reduced-motion: reduce) { .mf-ep::after { display: none; } }
 
 /* Day view */
 .mf-day-head { display: flex; align-items: center; gap: 12px; padding: 6px 2px 16px; }
@@ -2755,6 +2806,16 @@ body.mf-app {
   color: #ffd27f;
   margin-bottom: 14px;
 }
+/* Cycling brand taglines under the bar — slow fade in/out (JS toggles --in). */
+.mf-progress-taglines {
+  margin-top: 30px;
+  min-height: 46px;
+  font: 600 15.5px/1.45 system-ui, -apple-system, "Inter", sans-serif;
+  color: var(--text);
+  opacity: 0;
+  transition: opacity 1.5s ease;
+}
+.mf-progress-taglines.mf-tagline--in { opacity: 1; }
 /* Room under the bar for exciting copy / hint imagery while the chapter bakes. */
 .mf-progress-teaser {
   margin-top: 40px;
