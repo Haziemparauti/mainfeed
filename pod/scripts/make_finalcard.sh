@@ -7,14 +7,16 @@
 # fades in (the "7U → final card has the fade out and in" rule). Per-user only
 # via @handle — no manual inputs.
 #
+#   [logo]  Mainfeed              (sign-off, top-centre)
 #   TO BE CONTINUED
 #   @<handle>, your story isn't over.
 #   Tune in next episode.
-#   [logo]  Mainfeed              (sign-off, bottom-centre)
 #
 # Usage:
 #   make_finalcard.sh <handle> <out.mp4>
-#   ASSETS_DIR overrides the asset dir (default: pod/assets).
+#   env: ASSETS_DIR overrides the asset dir (default: pod/assets).
+#        TMPROOT where the textfile goes (default /tmp; set "." for local
+#        Windows renders so the filtergraph path stays relative).
 set -euo pipefail
 
 HANDLE="${1:?handle}"; OUT="${2:?out}"
@@ -27,7 +29,7 @@ FONT="$ASSETS_DIR/Inter-Medium.ttf"
 
 DUR=6.5
 
-TMPD="$(mktemp -d)"
+TMPD="$(mktemp -d "${TMPROOT:-/tmp}/final.XXXXXX")"
 trap 'rm -rf "$TMPD"' EXIT
 TUNE="$TMPD/tune1.txt"
 # textfile= keeps the apostrophe in "isn't" raw — no escaping needed.
@@ -36,10 +38,10 @@ printf '@%s, your story isn'\''t over.' "$HANDLE" > "$TUNE"
 FC="$TMPD/fc.txt"
 cat > "$FC" <<EOF
 color=c=0x060608:s=720x1280:d=${DUR}[bk];
-[0:v]scale=40:-1[icon];
-[1:v]scale=92:-1[wm];
-[bk][icon]overlay=(W-w)/2:1112[l1];
-[l1][wm]overlay=(W-w)/2:1162[l2];
+[0:v]scale=120:120[icon];
+[1:v]scale=120:-1[wm];
+[bk][icon]overlay=(W-w)/2:118[l1];
+[l1][wm]overlay=(W-w)/2:246[l2];
 [l2]drawtext=fontfile=${FONT}:text='TO BE CONTINUED':fontcolor=white:fontsize=56:x=(w-text_w)/2:y=520:alpha='if(lt(t,1.0),0,if(lt(t,1.7),(t-1.0)/0.7,1))',drawtext=fontfile=${FONT}:textfile=${TUNE}:fontcolor=0xffd27f:fontsize=28:x=(w-text_w)/2:y=624:alpha='if(lt(t,2.6),0,if(lt(t,3.3),(t-2.6)/0.7,1))',drawtext=fontfile=${FONT}:text='Tune in next episode.':fontcolor=0xffd27f:fontsize=28:x=(w-text_w)/2:y=668:alpha='if(lt(t,2.6),0,if(lt(t,3.3),(t-2.6)/0.7,1))',fade=t=in:st=0:d=0.9,fade=t=out:st=5.3:d=1.2[v]
 EOF
 
