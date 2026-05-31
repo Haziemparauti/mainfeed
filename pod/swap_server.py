@@ -152,6 +152,10 @@ class SwapRequest(BaseModel):
     size: str = "832*480"   # DreamID-V uses asterisk-separated W*H
     base_seed: int = 42
     frame_num: Optional[int] = None  # default determined by DreamID-V if None
+    # long_swap: sliding-window swap for >81-frame clips (10-15s 9:16 Storytime
+    # videos). Splits into overlapping <=81f windows, swaps each, cross-fades
+    # overlaps, muxes source audio. False = legacy single swap (unchanged).
+    long_swap: bool = False
     # Watermark "context bug" inputs: handle → mainfeed.app/@handle, arc_name →
     # the share-name on the bug (e.g. "LOST"), day → DAY N. If handle is null
     # the burn-in is a no-op and the raw swap output is uploaded.
@@ -466,12 +470,42 @@ import flux_pulid_runtime
 
 async def run_dreamidv(workdir: Path, src_image: Path, ref_video: Path,
                        sample_steps: int, sample_guide_scale_img: float,
-                       size: str, base_seed: int, frame_num: Optional[int]) -> Path:
-    """Run one swap against the warm DreamID-V pipeline (in-process)."""
+                       size: str, base_seed: int, frame_num: Optional[int],
+                       long_swap: bool = False) -> Path:
+    """Run one swap against the warm DreamID-V pipeline (in-process).
+
+    long_swap=True → sliding-window swap (run_swap_long) for >81-frame clips:
+    overlapping <=81f windows, cross-faded, source audio muxed back. Otherwise
+    the legacy single-shot run_swap (unchanged)."""
     if not dreamidv_runtime.is_ready():
         raise RuntimeError("dreamidv_runtime not initialized; call init() at startup")
 
     output = workdir / "output.mp4"
+
+    if long_swap:
+        print(f"[swap_server] running dreamidv LONG (sliding-window) "
+              f"size={size} steps={sample_steps} seed={base_seed}", flush=True)
+        started = time.time()
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: dreamidv_runtime.run_swap_long(
+                src_image=str(src_image),
+                ref_video=str(ref_video),
+                out_mp4=str(output),
+                size=size,
+                sample_steps=sample_steps,
+                sample_guide_scale_img=sample_guide_scale_img,
+                seed=base_seed,
+                offload_model=True,
+                task="swapface",
+                keep_audio=True,
+            ),
+        )
+        elapsed = round(time.time() - started, 2)
+        if not output.exists():
+            raise RuntimeError(f"DreamID-V long-swap finished {elapsed}s but no output at {output}")
+        print(f"[swap_server] DreamID-V long-swap finished in {elapsed}s, output {output.stat().st_size} bytes", flush=True)
+        return output
 
     # frame_num=None → fall back to DreamID-V's default of 81. The worker
     # sends 81 (3s @ 24fps, locked spec); we keep the optional path for
@@ -633,6 +667,7 @@ async def run_swap(req: SwapRequest) -> None:
                 workdir, src_image, ref_video,
                 req.sample_steps, req.sample_guide_scale_img,
                 req.size, req.base_seed, req.frame_num,
+                bool(req.long_swap),
             )
 
         # The watermark "context bug" is intentionally NOT burned here. The

@@ -113,7 +113,15 @@ def init(weights_dir: str, dreamidv_dir: str, task: str = "swapface",
     # 720² the higher-fidelity dial. Both are /16-divisible (512/16=32, 720/16=45)
     # so the DiT/VAE handle them; quality dips vs 1024² — the deliberate trade for
     # bake speed/cost (the 1024² test confirmed 1:1/5s renders; we don't need it).
-    _SIZE_CONFIGS = { **SIZE_CONFIGS, '512*512': (512, 512), '720*720': (720, 720) }
+    # 9:16 VERTICAL (TikTok) is the LOCKED format 2026-05-31. Register the vertical
+    # dims (also /16-divisible: 720/16=45, 1280/16=80; 480/16=30, 832/16=52). 720*1280
+    # is the production target; 480*832 a faster/cheaper dial. Squares kept for legacy.
+    _SIZE_CONFIGS = {
+        **SIZE_CONFIGS,
+        '512*512': (512, 512), '720*720': (720, 720),
+        '720*1280': (720, 1280), '1280*720': (1280, 720),
+        '480*832': (480, 832), '832*480': (832, 480),
+    }
     _CACHE_VIDEO = cache_video
     _PROCESS_DWPOSE = process_dwpose
     _DEVICE = device_id
