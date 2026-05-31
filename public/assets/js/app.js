@@ -101,15 +101,15 @@ $('#mf-menu-logout')?.addEventListener('click', async (e) => {
 // ============ Storytime feed (arc → day list → day view) ============
 
 let _sagaPollTimer = null;
-let _openDay = null;      // null = day-list view; N = viewing day N
+let _openDay = null;      // null = day-list view; N = viewing episode N
 let _shareName = 'LOST';
-// Day view: Story (one piece, 30s auto-advance) vs Feed (scrollable 1→N).
+// Episode view = ONE continuous video. Segments (intro, swap clips, text cards,
+// final card) play back-to-back; each plays its full length, then auto-advances
+// on `ended`. No toggle, no per-piece timer — it just plays start→finish.
 let _dayPieces = [];
 let _dayNum = null;
-let _view = 'feed';        // 'feed' | 'story'  (default Feed = the existing scroll view)
-let _storyIndex = 0;
-let _storyTimer = null;
-const STORY_MS = 20000;    // each piece shows for 20s in Story view
+let _segIndex = 0;         // which segment is on screen
+let _playerMuted = false;  // flips true only if autoplay-with-sound is blocked
 
 async function loadDays() {
   const feed = $('#mf-feed');
@@ -222,131 +222,98 @@ async function openDay(day) {
 function renderDayView(day, pieces) {
   _dayPieces = pieces;
   _dayNum = day;
-  _storyIndex = 0;
+  _segIndex = 0;
   const feed = $('#mf-feed');
   feed.innerHTML = `
     <div class="mf-day-head">
       <button class="mf-day-back" data-day-back>‹ All episodes</button>
       <div class="mf-day-title">${escapeHtml(_shareName)} · EPISODE ${day}</div>
     </div>
-    <div class="mf-viewtoggle" role="tablist">
-      <button class="mf-viewtoggle-btn" data-view="story" role="tab">▶ Story view</button>
-      <button class="mf-viewtoggle-btn" data-view="feed" role="tab">☰ Feed view</button>
-    </div>
-    <div class="mf-view-container"></div>`;
-  renderView();
-}
-
-// Render whichever view is active into .mf-view-container + sync the toggle.
-function renderView() {
-  const c = $('.mf-view-container');
-  if (!c) return;
-  document.querySelectorAll('.mf-viewtoggle-btn').forEach((b) =>
-    b.classList.toggle('mf-viewtoggle-btn--active', b.dataset.view === _view));
-  stopStory();
-  if (_view === 'story') { renderStory(); return; }
-  c.innerHTML = `<div class="mf-day-pieces">${_dayPieces.map((p, i) => pieceCard(p, i, _dayPieces.length)).join('')}</div>`;
-}
-
-function setView(v) {
-  if (v === _view || (v !== 'story' && v !== 'feed')) return;
-  _view = v;
-  renderView();
-}
-
-// ---- Story view: one piece at a time, 30s each, auto-advance, smooth fades ----
-function renderStory() {
-  const c = $('.mf-view-container');
-  if (!c) return;
-  _storyIndex = Math.max(0, Math.min(_storyIndex, _dayPieces.length - 1));
-  const p = _dayPieces[_storyIndex];
-  if (!p) { c.innerHTML = ''; return; }
-  const total = _dayPieces.length;
-  const media = p.type === 'image'
-    ? `<img class="mf-story-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`
-    : `<video class="mf-story-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`;
-  const caption = String(p.caption || '').trim();
-  c.innerHTML = `
-    <div class="mf-story">
-      <div class="mf-story-stage">
-        ${media}
-        <span class="mf-piece-num">${_storyIndex + 1}<span class="mf-piece-num-sep">/</span>${total}</span>
-      </div>
-      ${caption ? `<p class="mf-story-caption">${escapeHtml(caption)}</p>` : ''}
-      <div class="mf-story-progress"><div class="mf-story-progress-bar"></div></div>
-      <div class="mf-story-nav">
-        <button class="mf-story-btn" data-story-nav="back" ${_storyIndex === 0 ? 'disabled' : ''}>‹ Back</button>
-        <button class="mf-story-btn" data-story-nav="next" ${_storyIndex >= total - 1 ? 'disabled' : ''}>Next ›</button>
+    <div class="mf-player" id="mf-player">
+      <div class="mf-player-stage">
+        <video class="mf-player-video" id="mf-pv" playsinline preload="auto"></video>
+        <button class="mf-player-unmute" id="mf-pv-unmute" type="button" hidden>🔊 Tap for sound</button>
+        <div class="mf-player-overlay" id="mf-pv-overlay" hidden>
+          <button class="mf-player-act" data-piece-action="download" type="button" aria-label="Save video">
+            <svg class="mf-player-act-ic" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>
+            <span class="mf-act-label">Save</span>
+          </button>
+          <button class="mf-player-act" data-piece-action="share" type="button" aria-label="Share video">
+            <svg class="mf-player-act-ic" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5 8.6 10.5"/></svg>
+            <span class="mf-act-label">Share</span>
+          </button>
+        </div>
       </div>
     </div>`;
-  startStoryTimer();
-}
-
-// Animate the 30s progress bar, then auto-advance (stops on the last piece).
-function startStoryTimer() {
-  stopStory();
-  const bar = $('.mf-story-progress-bar');
-  if (bar) {
-    bar.style.transition = 'none';
-    bar.style.width = '0%';
-    void bar.offsetWidth;                       // reflow so 0% sticks before animating
-    bar.style.transition = `width ${STORY_MS}ms linear`;
-    bar.style.width = '100%';
+  if (!pieces.length) {
+    $('#mf-player').innerHTML = `<div class="mf-day-loading">This episode is still rendering…</div>`;
+    return;
   }
-  _storyTimer = setTimeout(() => {
-    if (_storyIndex < _dayPieces.length - 1) storyGo(_storyIndex + 1);
-  }, STORY_MS);
+  playSegment(0);
 }
 
-function stopStory() {
-  if (_storyTimer) { clearTimeout(_storyTimer); _storyTimer = null; }
+// A segment is shareable footage (the swap clips) — vs story furniture (intro,
+// text cards, final card) which plays but can't leave the app. The worker tags
+// each piece with `segment`; older rows fall back to "any non-image = footage".
+function isVideoSegment(p) {
+  if (p && p.segment) return p.segment === 'video';
+  return !!p && p.type !== 'image';
 }
 
-// Fade the current piece out, swap to idx, fade the new one in (CSS handles both).
-function storyGo(idx) {
+// Render + autoplay segment idx into the single persistent <video>. Reusing one
+// element keeps the audio "unlocked" state across the whole episode, so the cut
+// between segments is seamless (the in/out fades are baked into the mp4s).
+function playSegment(idx) {
   if (idx < 0 || idx >= _dayPieces.length) return;
-  stopStory();
-  const story = $('.mf-story');
-  if (story) {
-    story.classList.add('mf-story--fading');
-    setTimeout(() => { _storyIndex = idx; renderStory(); }, 280);
-  } else {
-    _storyIndex = idx;
-    renderStory();
+  _segIndex = idx;
+  const p = _dayPieces[idx];
+  const v = $('#mf-pv');
+  if (!v) return;
+  const stage = v.closest('.mf-player-stage');
+  const overlay = $('#mf-pv-overlay');
+  const last = idx >= _dayPieces.length - 1;
+
+  // Stage carries the current piece's identity for the Save/Share buttons.
+  if (stage) {
+    stage.dataset.id = p.id;
+    stage.dataset.type = p.type || '';
+    stage.dataset.url = `${API}${p.file_url}`;
+    stage.dataset.export = `${API}${p.export_url || p.file_url}`;  // watermarked copy when present
   }
+  // Save/Share live ON the video — only for shareable footage, never on cards.
+  if (overlay) overlay.hidden = !isVideoSegment(p);
+
+  v.src = `${API}${p.file_url}`;
+  v.muted = _playerMuted;
+  v.play().catch(() => {
+    // Autoplay-with-sound blocked (no media engagement yet) → play muted and
+    // surface a one-tap unmute. Once tapped, the rest of the episode has sound.
+    _playerMuted = true;
+    v.muted = true;
+    v.play().catch(() => {});
+    const u = $('#mf-pv-unmute'); if (u) u.hidden = false;
+  });
+  v.onended = () => { if (!last) playSegment(idx + 1); };
 }
 
-function pieceCard(p, i, total) {
-  const isImage = p.type === 'image';
-  const media = isImage
-    ? `<img class="mf-piece-media" src="${API}${p.file_url}" alt="" crossorigin="use-credentials" />`
-    : `<video class="mf-piece-media" src="${API}${p.file_url}" muted loop playsinline autoplay></video>`;
-  const caption = String(p.caption || '').trim();
-  // Subtle 1→N sequence counter (Instagram-carousel style), top-right of the stage,
-  // so each chapter reads beginning→end.
-  const num = (Number.isInteger(i) && Number.isInteger(total))
-    ? `<span class="mf-piece-num">${i + 1}<span class="mf-piece-num-sep">/</span>${total}</span>` : '';
-  // Clean media in-feed (no burned bug). The monologue is in-app caption text.
-  return `
-    <article class="mf-piece" data-id="${p.id}" data-type="${p.type}" data-url="${API}${p.file_url}">
-      <div class="mf-piece-stage">${media}${num}</div>
-      ${caption ? `<p class="mf-piece-caption">${escapeHtml(caption)}</p>` : ''}
-      <div class="mf-piece-actions">
-        <button class="mf-piece-action" data-piece-action="download" data-id="${p.id}">Download</button>
-        <button class="mf-piece-action" data-piece-action="share" data-id="${p.id}">Share</button>
-      </div>
-    </article>`;
+function stopPlayer() {
+  const v = $('#mf-pv');
+  if (v) { v.onended = null; try { v.pause(); } catch (_) {} }
 }
 
-// Day navigation: open a day, or go back to the chapter list.
+// Episode navigation: open an episode, go back to the list, or unmute.
 document.addEventListener('click', (e) => {
   const ep = e.target.closest('.mf-ep:not(.mf-ep--locked)');
   if (ep && ep.dataset.day) { openDay(parseInt(ep.dataset.day, 10)); return; }
-  if (e.target.closest('[data-day-back]')) { stopStory(); _openDay = null; loadDays(); return; }
-  const vt = e.target.closest('[data-view]');
-  if (vt) { setView(vt.dataset.view); return; }
-  const sn = e.target.closest('[data-story-nav]');
-  if (sn) { storyGo(_storyIndex + (sn.dataset.storyNav === 'next' ? 1 : -1)); return; }
+  if (e.target.closest('[data-day-back]')) { stopPlayer(); _openDay = null; loadDays(); return; }
+  const unmute = e.target.closest('#mf-pv-unmute');
+  if (unmute) {
+    _playerMuted = false;
+    const v = $('#mf-pv');
+    if (v) { v.muted = false; v.play().catch(() => {}); }
+    unmute.hidden = true;
+    return;
+  }
 });
 
 // ============ Piece actions ============
@@ -355,11 +322,12 @@ document.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-piece-action]');
   if (!btn) return;
   const action = btn.dataset.pieceAction;
-  const id = btn.dataset.id;
-  const card = btn.closest('.mf-piece');
-  if (action === 'download') return downloadPiece(id, card, btn);
-  if (action === 'share') return sharePiece(id, card, btn);
-  if (action === 'publish-toggle') return togglePublish(id, card, btn);
+  const container = btn.closest('.mf-player-stage') || btn.closest('.mf-piece');
+  if (!container) return;
+  const id = btn.dataset.id || container.dataset.id;
+  if (action === 'download') return downloadPiece(id, container, btn);
+  if (action === 'share') return sharePiece(id, container, btn);
+  if (action === 'publish-toggle') return togglePublish(id, container, btn);
 });
 
 // Liveness gate. Any action that lets a face-swap leave the private feed
@@ -439,17 +407,26 @@ function showToast(msg) {
   }, 2500);
 }
 
-async function downloadPiece(id, card, btn) {
+// Each shareable clip is downloaded/shared as its branded mp4 — the context bug
+// (logo + mainfeed.app/@handle + LOST · EPISODE N) is already burned into the
+// `export` copy by the pod, so there's no client-side baking to do.
+async function fetchBlob(url) {
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) throw new Error('fetch failed');
+  return await res.blob();
+}
+
+async function downloadPiece(id, stage, btn) {
   // Downloaded files end up on TikTok/IG/etc. — same likeness-leaves-the-app
   // risk as Publish, so we gate behind verification too.
   if (!(await requireVerified())) return;
-  setBusy(btn, 'Baking…');
+  setBusy(btn, 'Saving…');
   try {
-    const blob = await renderPieceWithCaption(card);
+    const blob = await fetchBlob(stage.dataset.export || stage.dataset.url);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `mainfeed-${id}.jpg`;
+    a.download = `mainfeed-${id}.mp4`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -462,24 +439,24 @@ async function downloadPiece(id, card, btn) {
   }
 }
 
-async function sharePiece(id, card, btn) {
+async function sharePiece(id, stage, btn) {
   // Web Share API hands the file straight to other apps — same as Download.
   if (!(await requireVerified())) return;
   setBusy(btn, 'Preparing…');
   try {
-    const blob = await renderPieceWithCaption(card);
-    const file = new File([blob], `mainfeed-${id}.jpg`, { type: 'image/jpeg' });
+    const blob = await fetchBlob(stage.dataset.export || stage.dataset.url);
+    const file = new File([blob], `mainfeed-${id}.mp4`, { type: 'video/mp4' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], text: 'Made on Mainfeed.app' });
     } else if (navigator.share) {
       await navigator.share({ title: 'Mainfeed', text: 'Made on Mainfeed.app' });
     } else {
-      alert('Share not supported on this browser. Use Download instead.');
+      alert('Share not supported on this browser. Use Save instead.');
     }
   } catch (err) {
     if (err && err.name !== 'AbortError') {
       console.error('share failed', err);
-      alert('Share failed. Try Download instead.');
+      alert('Share failed. Try Save instead.');
     }
   } finally {
     setBusy(btn, null);
@@ -488,96 +465,16 @@ async function sharePiece(id, card, btn) {
 
 function setBusy(btn, label) {
   if (!btn) return;
+  // Overlay buttons are [icon][label] — swap only the label so the icon stays.
+  const tgt = btn.querySelector('.mf-act-label') || btn;
   if (label) {
-    if (!btn.dataset.origLabel) btn.dataset.origLabel = btn.textContent;
-    btn.textContent = label;
+    if (!btn.dataset.origLabel) btn.dataset.origLabel = tgt.textContent;
+    tgt.textContent = label;
     btn.disabled = true;
   } else {
-    btn.textContent = btn.dataset.origLabel || btn.textContent;
+    tgt.textContent = btn.dataset.origLabel || tgt.textContent;
     btn.disabled = false;
   }
-}
-
-// ============ Caption baking on a canvas (download + share) ============
-
-async function loadImageBlob(url) {
-  const res = await fetch(url, { credentials: 'include' });
-  if (!res.ok) throw new Error('image fetch failed');
-  return await res.blob();
-}
-
-async function renderPieceWithCaption(card) {
-  const url = card.dataset.url;
-  const caption = (card.dataset.caption || '').trim();
-  const blob = await loadImageBlob(url);
-  const imgBitmap = await createImageBitmap(blob);
-  const canvas = document.createElement('canvas');
-  canvas.width = imgBitmap.width;
-  canvas.height = imgBitmap.height;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(imgBitmap, 0, 0);
-
-  if (caption) drawCaptionTop(ctx, canvas.width, canvas.height, caption);
-  drawWatermark(ctx, canvas.width, canvas.height, `Mainfeed.app · @${currentUser?.handle || ''}`);
-
-  return await new Promise((resolve) =>
-    canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92)
-  );
-}
-
-function drawCaptionTop(ctx, w, h, text) {
-  const fontSize = Math.round(h * 0.06);
-  const padding = Math.round(w * 0.05);
-  const maxWidth = w - padding * 2;
-  ctx.font = `bold ${fontSize}px Impact, "Anton", "Arial Black", sans-serif`;
-  ctx.fillStyle = 'white';
-  ctx.strokeStyle = 'black';
-  ctx.lineWidth = Math.max(2, fontSize * 0.08);
-  ctx.lineJoin = 'round';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  drawWrappedText(ctx, text.toUpperCase(), w / 2, padding, maxWidth, fontSize * 1.1);
-}
-
-function drawWrappedText(ctx, text, x, startY, maxWidth, lineHeight) {
-  const lines = wrapLines(ctx, text, maxWidth);
-  lines.forEach((line, i) => {
-    const y = startY + i * lineHeight;
-    ctx.strokeText(line, x, y);
-    ctx.fillText(line, x, y);
-  });
-}
-
-function wrapLines(ctx, text, maxWidth) {
-  const words = String(text).split(/\s+/);
-  const lines = [];
-  let current = '';
-  for (const w of words) {
-    const test = current ? current + ' ' + w : w;
-    if (ctx.measureText(test).width > maxWidth && current) {
-      lines.push(current);
-      current = w;
-    } else {
-      current = test;
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
-}
-
-function drawWatermark(ctx, w, h, text) {
-  const fontSize = Math.max(11, Math.round(h * 0.018));
-  ctx.font = `600 ${fontSize}px -apple-system, "SF Pro Text", system-ui, sans-serif`;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-  ctx.lineWidth = 2;
-  ctx.lineJoin = 'round';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'bottom';
-  const padX = Math.max(10, Math.round(w * 0.015));
-  const padY = Math.max(10, Math.round(h * 0.015));
-  ctx.strokeText(text, w - padX, h - padY);
-  ctx.fillText(text, w - padX, h - padY);
 }
 
 // ============ Verify-account flow (10-sec record + face check + upload) ============

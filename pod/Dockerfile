@@ -95,7 +95,10 @@ COPY assets/wordmark.png        /app/assets/wordmark.png
 COPY assets/card_frame.png      /app/assets/card_frame.png
 COPY scripts/make_intro.sh      /app/scripts/make_intro.sh
 COPY scripts/make_card.sh       /app/scripts/make_card.sh
-RUN chmod +x /app/scripts/make_intro.sh /app/scripts/make_card.sh
+COPY scripts/make_finalcard.sh  /app/scripts/make_finalcard.sh
+COPY scripts/fade_clip.sh       /app/scripts/fade_clip.sh
+RUN chmod +x /app/scripts/make_intro.sh /app/scripts/make_card.sh \
+             /app/scripts/make_finalcard.sh /app/scripts/fade_clip.sh
 
 # === Server code ===
 # swap_server.py imports dreamidv_runtime + sliding_window at startup.

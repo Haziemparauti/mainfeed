@@ -1124,65 +1124,55 @@ body.mf-app {
 .mf-day-pieces { display: flex; flex-direction: column; gap: 18px; }
 .mf-day-loading { text-align: center; padding: 48px 16px; color: var(--text-mute); }
 
-/* ============ Day view: Story / Feed toggle ============ */
-.mf-viewtoggle { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 2px 16px; }
-.mf-viewtoggle-btn {
-  padding: 11px 10px; border-radius: 12px; cursor: pointer;
-  font: 600 13px/1 system-ui, -apple-system, "Inter", sans-serif; letter-spacing: 0.01em;
-  color: var(--text-mute); background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  transition: color .15s ease, background .15s ease, border-color .15s ease, transform .1s ease;
+/* ============ Episode player: one continuous video (intro → final card) ============
+   Every segment (intro, swap clips, text cards, final card) plays back-to-back
+   in a single persistent <video>; in/out fades are baked into the mp4s, so the
+   joins are invisible. No toggle, no per-piece timer. Save/Share float ON the
+   clip for shareable footage only — never on cards/intro/final. */
+.mf-player { width: 100%; }
+.mf-player-stage {
+  position: relative; width: 100%; max-width: 480px; margin: 0 auto;
+  aspect-ratio: 9 / 16; background: #000;
+  border-radius: 18px; overflow: hidden;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+.mf-player-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block; background: #000;
+}
+.mf-player-overlay {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: flex; gap: 10px; justify-content: flex-end; align-items: center;
+  padding: 14px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+  pointer-events: none;                       /* gradient is decorative */
+}
+.mf-player-overlay[hidden] { display: none; }
+.mf-player-act {
+  pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 15px; border-radius: 999px; cursor: pointer;
+  color: #fff; font: 600 14px/1 system-ui, -apple-system, "Inter", sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(18, 18, 22, 0.42);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  transition: background .15s ease, transform .1s ease;
   -webkit-tap-highlight-color: transparent;
 }
-.mf-viewtoggle-btn:active { transform: scale(0.98); }
-/* Active tab — 2px brand-gradient ring over a dark fill (matches .mf-piece). */
-.mf-viewtoggle-btn--active {
-  color: #fff; border: 1px solid transparent;
-  background:
-    linear-gradient(rgba(0, 11, 33, 0.92), rgba(0, 11, 33, 0.92)) padding-box,
-    var(--accent-grad) border-box;
+.mf-player-act:hover { background: rgba(40, 40, 48, 0.6); }
+.mf-player-act:active { transform: scale(0.96); }
+.mf-player-act:disabled { opacity: 0.6; cursor: default; }
+.mf-player-act-ic { flex: none; }
+/* One-tap unmute — shown only if the browser blocks autoplay-with-sound. */
+.mf-player-unmute {
+  position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 3;
+  padding: 8px 16px; border-radius: 999px; cursor: pointer;
+  color: #fff; font: 600 13px/1 system-ui, -apple-system, "Inter", sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(18, 18, 22, 0.62);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
-
-/* ============ Story view: one piece, 30s auto-advance ============ */
-.mf-story { animation: mf-story-fadein 0.3s ease; }
-.mf-story--fading { opacity: 0; transition: opacity 0.28s ease; }
-@keyframes mf-story-fadein { from { opacity: 0; } to { opacity: 1; } }
-
-.mf-story-stage {
-  position: relative; width: 100%; padding: 2px; border-radius: 18px; overflow: hidden;
-  background: var(--accent-grad);            /* 2px brand-gradient ring, like .mf-piece */
-}
-.mf-story-media {
-  display: block; width: 100%; height: auto; max-height: 64vh; object-fit: contain;
-  background: #000; border-radius: 16px;
-}
-.mf-story-caption {
-  margin: 12px 0 0; padding: 13px 16px; border-radius: 12px;
-  font: 500 15.5px/1.45 system-ui, -apple-system, "Inter", sans-serif;
-  color: #f4f4f6; background: #000;
-}
-/* 30-second progress bar — brand-gradient fill on a dark track (JS animates width 0→100%). */
-.mf-story-progress {
-  width: 100%; height: 6px; margin: 14px 0 12px;
-  background: rgba(255, 255, 255, 0.10); border-radius: 999px; overflow: hidden;
-}
-.mf-story-progress-bar {
-  height: 100%; width: 0; border-radius: 999px; background: var(--accent-grad);
-}
-/* Back / Next — brand-gradient-bordered buttons. */
-.mf-story-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.mf-story-btn {
-  padding: 13px 10px; border-radius: 12px; cursor: pointer;
-  font: 700 14px/1 system-ui, -apple-system, "Inter", sans-serif; color: var(--text);
-  border: 2px solid transparent;
-  background:
-    linear-gradient(var(--surface), var(--surface)) padding-box,
-    var(--accent-grad) border-box;
-  transition: transform .1s ease, opacity .15s ease;
-  -webkit-tap-highlight-color: transparent;
-}
-.mf-story-btn:disabled { opacity: 0.35; cursor: default; }
-.mf-story-btn:active:not(:disabled) { transform: scale(0.98); }
+.mf-player-unmute[hidden] { display: none; }
 
 /* In-app caption (the monologue — NEVER burned into media). Instagram-style
    card body: white text on solid black, NOT on the brand gradient (which the
