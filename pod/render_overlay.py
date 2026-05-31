@@ -9,12 +9,12 @@ LOCKED 2026-05-29 (memory: mainfeed_session_2026-05-29_decisions):
     bottom-left, a whisper (premium show-bug, not an ad banner):
 
         [logo]  mainfeed.app/@handle
-                LOST · DAY N
+                LOST · EPISODE N
 
     - the URL kills App/Play-Store confusion (Mainfeed is a web app) and routes
       a curious viewer to the user's /@handle profile.
     - `LOST` is the arc SHARE-NAME (arc internal name = jungle_survival), sand.
-    - `DAY N` is the per-piece day (1-30) — the serial curiosity hook, white.
+    - `EPISODE N` is the per-piece episode (1-30) — the serial curiosity hook, white.
 
 Applies to video, gif (short mp4) and image. cairosvg rasterizes the real
 Mainfeed brand SVG (pod is Linux; Dockerfile installs libcairo2 + cairosvg).
@@ -33,7 +33,7 @@ import cairosvg
 
 # ============ assets ============
 URL_FONT_PATH    = "/app/assets/Inter-Medium.ttf"   # clean sans — the URL line
-CHYRON_FONT_PATH = "/app/assets/Anton.ttf"          # condensed caps — LOST · DAY N
+CHYRON_FONT_PATH = "/app/assets/Anton.ttf"          # condensed caps — LOST · EPISODE N
 LOGO_SVG_PATH    = "/app/assets/logo-square2.svg"   # the real brand mark
 LOGO_HIRES_SIZE  = 512
 
@@ -111,7 +111,7 @@ def render_bug(handle: str, arc_name: Optional[str], day: Optional[int],
 
     url_text = f"mainfeed.app/@{handle}"
     arc_text = (arc_name or "").upper()
-    day_text = f"DAY {day}" if day is not None else ""
+    day_text = f"EPISODE {day}" if day is not None else ""
     dot      = "  •  "
     ls       = int(chy_sz * BUG_TRACKING_EM)
 

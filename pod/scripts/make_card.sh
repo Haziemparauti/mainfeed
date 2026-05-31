@@ -63,7 +63,7 @@ color=c=black:s=720x1280:d=${DUR}[bk];
 [bg0][1:v]overlay=(W-w)/2:255[s0];
 [s0][icon]overlay=104:290[s1];
 [s1][wm]overlay=160:300[s2];
-[s2]drawbox=x=104:y=372:w=512:h=2:color=white@0.16:t=fill,drawtext=fontfile=${FONT}:text='DAY ${DAY}':fontcolor=white:fontsize=30:x=616-text_w:y=294,drawtext=fontfile=${FONT}:text='Arc\\: ${ARC}':fontcolor=0xffd27f:fontsize=23:x=616-text_w:y=334${MONO},fade=t=in:st=0:d=0.7,fade=t=out:st=${FADEOUT}:d=0.8[v]
+[s2]drawbox=x=104:y=372:w=512:h=2:color=white@0.16:t=fill,drawtext=fontfile=${FONT}:text='EPISODE ${DAY}':fontcolor=white:fontsize=27:x=616-text_w:y=294,drawtext=fontfile=${FONT}:text='Arc\\: ${ARC}':fontcolor=0xffd27f:fontsize=23:x=616-text_w:y=334${MONO},fade=t=in:st=0:d=0.7,fade=t=out:st=${FADEOUT}:d=0.8[v]
 EOF
 
 ffmpeg -nostdin -y -loglevel error \
@@ -74,4 +74,4 @@ ffmpeg -nostdin -y -loglevel error \
   -filter_complex_script "$FC" -map "[v]" -t "$DUR" -r 24 \
   -c:v libx264 -preset veryfast -pix_fmt yuv420p -an "$OUT"
 
-echo "✓ card -> $OUT  (${N} lines, ${DUR}s, DAY ${DAY} / Arc: ${ARC})"
+echo "✓ card -> $OUT  (${N} lines, ${DUR}s, EPISODE ${DAY} / Arc: ${ARC})"

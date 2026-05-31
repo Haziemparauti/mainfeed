@@ -170,7 +170,7 @@ async function markFailed(env, pieceId, reason) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatch every piece of one day (10 pieces). reveal_at = that day's start.
 export async function dispatchDay(env, user, day, onlyScenes = null) {
-  const dayDef = (arcManifest.days || {})[String(day)];
+  const dayDef = (arcManifest.episodes || {})[String(day)];
   if (!dayDef) { console.warn('[storytime] no manifest for day', day); return 0; }
   const revealAt = dayRevealAt(user.saga_started_at, day);
   // wardrobe_phase = ceil(day/5) for the 6×5 arc structure.
@@ -295,7 +295,7 @@ export async function getSagaDays(env, userId) {
   const t = now();
   const days = (rows.results || []).map((r) => ({
     day: r.day,
-    title: ((arcManifest.days || {})[String(r.day)] || {}).title || `Day ${r.day}`,
+    title: ((arcManifest.episodes || {})[String(r.day)] || {}).title || `Episode ${r.day}`,
     total: r.total,
     ready: r.ready,
     processing: r.processing,

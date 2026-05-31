@@ -1,23 +1,23 @@
 {
   "arc": "jungle_survival",
   "share_name": "LOST",
-  "total_days": 30,
-  "pieces_per_day": 5,
+  "total_episodes": 30,
+  "pieces_per_episode": 5,
   "aspect_ratio": "9:16",
   "format_mix": {
     "video": 5
   },
-  "format_note": "RESTRUCTURED 2026-05-31: 5 pieces/day, ALL 9:16 vertical video (Seedance 2, up to 15s). Dropped the old 3-gif/4-image mix (too low quality with our tools). Scene 1 = shared no-swap scenery; scenes 2+ = swap clips. Text cards may be added BETWEEN videos for context (free). frame_num is derived from each real stock clip's length at swap time, NOT hardcoded here.",
+  "format_note": "RESTRUCTURED 2026-05-31: 5 pieces/episode, ALL 9:16 vertical video (Seedance 2, up to 15s). Dropped the old 3-gif/4-image mix (too low quality with our tools). Scene 1 = shared no-swap scenery; scenes 2+ = swap clips. Text cards added BETWEEN videos for context (free). Episodes (renamed from Days 2026-05-31). frame_num is derived from each real stock clip's length at swap time, NOT hardcoded here.",
   "wardrobe_phases": {
     "1": {
-      "days": "1-5",
+      "episodes": "1-5",
       "name": "Everyman — grey tee + jeans",
       "iconic": "plain light-grey crew-neck short-sleeve T-shirt + classic blue jeans, barefoot",
       "subject": "a Latino man with warm brown skin (clearly brown, not pale or white), short dark straight hair",
-      "weather": "Days 1-3 overcast, no sun, cool, not dark; warms from Day 4"
+      "weather": "Episodes 1-3 overcast, no sun, cool, not dark; warms from Episode 4"
     }
   },
-  "days": {
+  "episodes": {
     "1": {
       "title": "How.. Where.. What !?",
       "arc_beat": "Wake (yawn/stretch -> eyes open, spooked) -> sit up, find the shredded paper -> walk scared through jungle, see the light -> out onto the cliff, vast ocean, hands behind head in disbelief.",

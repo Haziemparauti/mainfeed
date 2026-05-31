@@ -137,7 +137,7 @@ function renderDayList(days) {
       <div class="mf-saga-loading">
         <div class="mf-saga-spinner"></div>
         <h2>Your story is being created…</h2>
-        <p>Day 1 of <b>${escapeHtml(_shareName)}</b> is rendering. This takes a few minutes — it will appear here on its own.</p>
+        <p>Episode 1 of <b>${escapeHtml(_shareName)}</b> is rendering. This takes a few minutes — it will appear here on its own.</p>
         <div class="mf-saga-progress"><div class="mf-saga-progress-bar"></div></div>
       </div>`;
     return;
@@ -162,9 +162,9 @@ function heroLines(currentDay) {
   const n = currentDay;
   return [
     `Hi <span class="mf-hero-em">${escapeHtml(h)}</span>!`,
-    `Your story is now <span class="mf-hero-em">${n} day${n === 1 ? '' : 's'}</span> in.`,
+    `Your story is now <span class="mf-hero-em">${n} episode${n === 1 ? '' : 's'}</span> in.`,
     `You are now in the <span class="mf-hero-em">${escapeHtml(_shareName)}</span> saga.`,
-    `After 30 days, a new saga begins — <span class="mf-hero-em">starring you</span>.`,
+    `After 30 episodes, a new saga begins — <span class="mf-hero-em">starring you</span>.`,
   ];
 }
 function startHeroRotator(currentDay) {
@@ -190,7 +190,7 @@ function dayRow(d) {
     ? `<span class="mf-ep-icon mf-ep-icon--lock" aria-hidden="true">🔒</span>`
     : `<span class="mf-ep-icon mf-ep-icon--play" aria-hidden="true">▶</span>`;
   // "Day N : Episode title" — no piece count. Locked future chapters show a hint.
-  const title = d.title ? `Day ${d.day} : ${escapeHtml(d.title)}` : `Day ${d.day}`;
+  const title = d.title ? `Episode ${d.day} : ${escapeHtml(d.title)}` : `Episode ${d.day}`;
   const meta = locked ? (d.ready > 0 ? 'Available soon' : 'Locked') : '';
   // Per-day background image arrives later; render the (empty) layer now so
   // dropping in d.bg_image is a one-line change.
@@ -211,7 +211,7 @@ async function openDay(day) {
   _openDay = day;
   if (_sagaPollTimer) { clearTimeout(_sagaPollTimer); _sagaPollTimer = null; }
   const feed = $('#mf-feed');
-  feed.innerHTML = `<div class="mf-day-loading">Loading Day ${day}…</div>`;
+  feed.innerHTML = `<div class="mf-day-loading">Loading Episode ${day}…</div>`;
   const res = await fetch(`${API}/api/saga/day?n=${day}`, { credentials: 'include' });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return showError(data.error);
@@ -226,8 +226,8 @@ function renderDayView(day, pieces) {
   const feed = $('#mf-feed');
   feed.innerHTML = `
     <div class="mf-day-head">
-      <button class="mf-day-back" data-day-back>‹ All chapters</button>
-      <div class="mf-day-title">${escapeHtml(_shareName)} · DAY ${day}</div>
+      <button class="mf-day-back" data-day-back>‹ All episodes</button>
+      <div class="mf-day-title">${escapeHtml(_shareName)} · EPISODE ${day}</div>
     </div>
     <div class="mf-viewtoggle" role="tablist">
       <button class="mf-viewtoggle-btn" data-view="story" role="tab">▶ Story view</button>
