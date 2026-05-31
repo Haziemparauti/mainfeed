@@ -337,3 +337,110 @@ def run_swap(src_image: str, ref_video: str, out_mp4: str,
             logging.error(f"[dreamidv_runtime] tail-trim failed (keeping untrimmed): {e}")
 
     return out_mp4
+
+
+def _mux_audio(video_only: str, audio_src: str, out_mp4: str) -> str:
+    """Mux audio_src's audio onto a video-only mp4 (→ out_mp4). If audio_src has
+    no audio track, just move video_only → out_mp4. Used by the <=81f single-shot
+    path; the windowed path muxes audio inside sliding_window.assemble_windows."""
+    import sliding_window
+    import subprocess as _sp
+    import shutil as _sh
+    if not sliding_window.has_audio(audio_src):
+        if os.path.abspath(video_only) != os.path.abspath(out_mp4):
+            _sh.move(video_only, out_mp4)
+        return out_mp4
+    _sp.run(
+        ["ffmpeg", "-y", "-loglevel", "error",
+         "-i", video_only, "-i", audio_src,
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+         "-map", "0:v:0", "-map", "1:a:0", "-shortest", out_mp4],
+        check=True, capture_output=True,
+    )
+    if os.path.abspath(video_only) != os.path.abspath(out_mp4):
+        try:
+            os.remove(video_only)
+        except OSError:
+            pass
+    return out_mp4
+
+
+def run_swap_long(src_image: str, ref_video: str, out_mp4: str,
+                  size: str = "720*1280", sample_steps: int = 16,
+                  sample_guide_scale_img: float = 4.0,
+                  seed: int = 42, offload_model: bool = True,
+                  task: str = "swapface", keep_audio: bool = True) -> str:
+    """
+    Sliding-window swap for clips LONGER than DreamID-V's ~81-frame trained
+    window (our Storytime clips are 10-15s = 240-450 frames). The clip is split
+    into OVERLAPPING 81-frame windows; each window is swapped independently on
+    the warm pipeline (so identity is re-derived from the selfie every window),
+    then the windows are cross-faded over their overlap regions
+    (sliding_window.assemble_windows) so the per-window identity reset is hidden
+    behind a smooth alpha blend → seamless long swap. Source audio is muxed back.
+
+    Every window is exactly WINDOW_FRAMES (=81 = 4·20+1, a valid Wan frame count)
+    and TAIL_TRIM_FRAMES is 0, so each window swaps to exactly 81 frames and the
+    planned specs stay frame-aligned with the swapped outputs for assembly.
+
+    Clips <= 81 frames fall through to a single run_swap + audio mux.
+    Returns out_mp4.
+    """
+    if not _INITIALIZED:
+        raise RuntimeError("dreamidv_runtime.init() must be called before run_swap_long()")
+
+    import sliding_window
+    import tempfile
+    import shutil as _sh
+
+    total = sliding_window.probe_frames(ref_video)
+    fps = sliding_window.probe_fps(ref_video)
+    print(f"[dreamidv_runtime] run_swap_long: {total} frames @ {fps:.3f}fps size={size} "
+          f"keep_audio={keep_audio}", flush=True)
+    if total <= 0:
+        raise RuntimeError(f"run_swap_long: ref_video has no frames ({ref_video})")
+
+    # Short clip → no windowing needed. Round frame_num down to Wan's 4n+1.
+    if total <= sliding_window.WINDOW_FRAMES:
+        fn = max(5, ((total - 1) // 4) * 4 + 1)
+        tmp_video = out_mp4 + ".noaudio.mp4"
+        run_swap(src_image=src_image, ref_video=ref_video, out_mp4=tmp_video,
+                 size=size, sample_steps=sample_steps,
+                 sample_guide_scale_img=sample_guide_scale_img,
+                 frame_num=fn, seed=seed, offload_model=offload_model, task=task)
+        if keep_audio:
+            _mux_audio(tmp_video, ref_video, out_mp4)
+        else:
+            os.replace(tmp_video, out_mp4)
+        return out_mp4
+
+    specs = sliding_window.plan_windows(total)   # [(start, 81), ...], final ends at total
+    print(f"[dreamidv_runtime] run_swap_long: {len(specs)} windows {specs}", flush=True)
+
+    work = tempfile.mkdtemp(prefix="longswap_")
+    try:
+        window_clips = []
+        for idx, (start, length) in enumerate(specs):
+            win_src = os.path.join(work, f"win{idx}_src.mp4")
+            win_out = os.path.join(work, f"win{idx}_out.mp4")
+            sliding_window.extract_window(ref_video, start, length, win_src)
+            print(f"[dreamidv_runtime] run_swap_long window {idx + 1}/{len(specs)} "
+                  f"frames[{start}:{start + length}] → swap", flush=True)
+            run_swap(src_image=src_image, ref_video=win_src, out_mp4=win_out,
+                     size=size, sample_steps=sample_steps,
+                     sample_guide_scale_img=sample_guide_scale_img,
+                     frame_num=length, seed=seed,
+                     offload_model=offload_model, task=task)
+            window_clips.append(win_out)
+
+        audio_src = ref_video if keep_audio else None
+        sliding_window.assemble_windows(specs, window_clips, total, fps, out_mp4,
+                                        audio_src=audio_src)
+        if not os.path.exists(out_mp4):
+            raise RuntimeError(f"run_swap_long: assemble produced no output at {out_mp4}")
+        print(f"[dreamidv_runtime] run_swap_long DONE → {out_mp4} "
+              f"({os.path.getsize(out_mp4)} bytes, {total} frames)", flush=True)
+        return out_mp4
+    finally:
+        if os.environ.get("DEBUG_KEEP_WORKDIR", "0") != "1":
+            _sh.rmtree(work, ignore_errors=True)

@@ -111,6 +111,7 @@ COPY assets/logo-square2.svg  /app/assets/logo-square2.svg
 # brand_image() composes the same watermark onto Flux+PuLID JPEGs.
 COPY swap_server.py        /root/swap_server.py
 COPY dreamidv_runtime.py   /root/dreamidv_runtime.py
+COPY sliding_window.py     /root/sliding_window.py
 COPY flux_pulid_runtime.py /root/flux_pulid_runtime.py
 COPY render_overlay.py     /root/render_overlay.py
 COPY precompute_pose.py    /root/precompute_pose.py
