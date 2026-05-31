@@ -55,8 +55,7 @@ POD_SECRET=$(< "$STOCK_DIR/swap_pod_secret.txt")
 
 # R2 credentials are NOT loaded here on purpose. Per [[feedback_no_secrets_on_pod]]
 # the pod never holds R2 keys — both reads (weights) and writes (outputs) go
-# through worker proxy endpoints authed via SWAP_POD_SECRET. The r2_creds.txt
-# file is used ONLY by host-side tooling (mirror_flux_pulid_to_r2.py).
+# through worker proxy endpoints authed via SWAP_POD_SECRET.
 
 # Cloud type selector. SECURE is the dev-mode flow (SSH bootstrap + SCP source
 # for live iteration). COMMUNITY is image-only: no SSH (PUBLIC_KEY env isn't
@@ -90,14 +89,17 @@ PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILLA2lhnTAxCvp2g6pLC5uWAui1+pEJU
 #     A6000  48GB $0.33/hr  ← supply variable
 #     A5000  24GB $0.16/hr  ← cheapest but often sold out
 if [ "$CLOUD_TYPE" = "COMMUNITY" ]; then
-  # 48GB-only for the dual-pipeline test (DreamID-V swap + Flux must co-reside).
-  # 24GB cards (3090/4090/A5000) can't hold both — dropped from the ladder.
+  # Swap-only now (Flux image path removed 2026-05-31) → DreamID-V fits 24 GB,
+  # so the cheap 24 GB consumer cards lead the ladder. User pref: 4090 first,
+  # else 3090; 48 GB cards stay as fallbacks for when the 24 GB ones are sold out.
   GPU_FALLBACK=(
-    "${1:-NVIDIA RTX A6000}"
+    "${1:-NVIDIA GeForce RTX 4090}"
+    "NVIDIA GeForce RTX 3090"
+    "NVIDIA RTX A5000"
+    "NVIDIA RTX A6000"
     "NVIDIA A40"
     "NVIDIA L40"
     "NVIDIA L40S"
-    "NVIDIA RTX 6000 Ada Generation"
     "NVIDIA A100 80GB PCIe"
   )
 else
@@ -144,21 +146,11 @@ echo "▶ Deploying pod ($CLOUD_TYPE cloud, fallback ladder)..."
 POD_ID=""
 # Optional env overrides — default to "" (omit from deploy env) so the
 # Dockerfile defaults apply. Inject from the caller's shell:
-#   DREAMIDV_ENABLED=0 bash pod/scripts/spin_new_pod.sh   # image-only test (skip /swap loading)
-#   FLUX_PULID_ENABLED=0 bash pod/scripts/spin_new_pod.sh # video-only test (skip /image loading)
-#   HF_TOKEN=hf_xxx       bash pod/scripts/spin_new_pod.sh # needed for FLUX.1-schnell (gated repo)
+#   DREAMIDV_ENABLED=0 bash pod/scripts/spin_new_pod.sh   # skip /swap model load (rarely useful now)
 # We embed them into the deploy env array so the Dockerfile CMD's swap_server.py
 # sees them on the VERY FIRST container start — no waiting for SSH bootstrap.
-# Token auto-pickup from $STOCK_DIR/hf_token.txt if not in env (parallel pattern
-# to swap_pod_secret.txt + runpod_key.txt). Safe because $STOCK_DIR is the
-# gitignored secret cache.
-if [ -z "${HF_TOKEN:-}" ] && [ -f "$STOCK_DIR/hf_token.txt" ]; then
-  HF_TOKEN=$(< "$STOCK_DIR/hf_token.txt")
-fi
 EXTRA_ENV=""
 [ -n "${DREAMIDV_ENABLED:-}" ]    && EXTRA_ENV="$EXTRA_ENV, {key: \\\"DREAMIDV_ENABLED\\\", value: \\\"$DREAMIDV_ENABLED\\\"}"
-[ -n "${FLUX_PULID_ENABLED:-}" ]  && EXTRA_ENV="$EXTRA_ENV, {key: \\\"FLUX_PULID_ENABLED\\\", value: \\\"$FLUX_PULID_ENABLED\\\"}"
-[ -n "${HF_TOKEN:-}" ]            && EXTRA_ENV="$EXTRA_ENV, {key: \\\"HF_TOKEN\\\", value: \\\"$HF_TOKEN\\\"}"
 
 # R2 weight-mirror fast-path: HARDEN_WEIGHTS_R2=1 tells the pod to fetch
 # weights via the worker's /api/pod/weight proxy (bearer-authed via the
@@ -314,7 +306,7 @@ ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" 'mkdir -p /app/assets /workspace/ckp
 scp $SSH_OPTS -P "$POD_PORT" \
   "$REPO_ROOT/pod/swap_server.py" \
   "$REPO_ROOT/pod/dreamidv_runtime.py" \
-  "$REPO_ROOT/pod/flux_pulid_runtime.py" \
+  "$REPO_ROOT/pod/sliding_window.py" \
   "$REPO_ROOT/pod/render_overlay.py" \
   "$REPO_ROOT/pod/precompute_pose.py" \
   root@"$POD_IP":/root/
@@ -333,7 +325,6 @@ echo "▶ Writing env file + starting swap_server.py..."
 ssh $SSH_OPTS -p "$POD_PORT" root@"$POD_IP" \
   POD_SECRET="$POD_SECRET" \
   DREAMIDV_ENABLED="${DREAMIDV_ENABLED:-}" \
-  FLUX_PULID_ENABLED="${FLUX_PULID_ENABLED:-}" \
   bash -s <<'REMOTE'
 set -e
 # Minimal env file — most defaults are baked into the Dockerfile ENV (see
@@ -345,7 +336,6 @@ cat > /root/pod_env.sh <<ENV
 SWAP_POD_SECRET=$POD_SECRET
 DEBUG_KEEP_WORKDIR=1
 ${DREAMIDV_ENABLED:+DREAMIDV_ENABLED=$DREAMIDV_ENABLED}
-${FLUX_PULID_ENABLED:+FLUX_PULID_ENABLED=$FLUX_PULID_ENABLED}
 ENV
 chmod 600 /root/pod_env.sh
 

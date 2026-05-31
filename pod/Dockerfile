@@ -39,19 +39,6 @@ RUN git clone $DREAMIDV_REPO /root/dreamidv \
     && sed -i 's|mediapipe==0.10.5#numpy|mediapipe==0.10.5  # numpy|' requirements.txt \
     && sed -i '/^flash_attn/d' requirements.txt
 
-# === Clone PuLID at pinned commit (for Flux.1-schnell image generation path) ===
-# Source: Haziemparauti/PuLID (fork of ToTheBeginning/PuLID) — same supply-chain
-# pattern as DreamID-V. Pinned to the 2025-07-31 "support FLUX.1-Krea-dev" SHA
-# which works with both Flux.1-schnell + Flux.1-dev variants via the same code.
-# License: Apache 2.0 (verified 2026-05-27, both PuLID code + PuLID-FLUX weights).
-# Used by pod/flux_pulid_runtime.py for the 10/day cosplay-image quota
-# (see [[mainfeed_image_library_architecture]]).
-ARG PULID_REPO=https://github.com/Haziemparauti/PuLID.git
-ARG PULID_SHA=1aa2fc7df4bf51080df39f355f9abdc1cbfefbaa
-RUN git clone $PULID_REPO /root/pulid \
-    && cd /root/pulid && git checkout $PULID_SHA \
-    && rm -rf /root/pulid/.git
-
 WORKDIR /root/dreamidv
 
 # === Python deps — ONE RUN ===
@@ -82,13 +69,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
          insightface facexlib timm \
     && pip install --no-cache-dir flash_attn --no-build-isolation
 
-# === PuLID-FLUX deps (DO NOT install PuLID's requirements.txt directly) ===
-# PuLID's upstream requirements.txt pins diffusers==0.25.0 and transformers==4.43.3,
-# both of which would DOWNGRADE the dreamidv-installed versions (0.35.2 / 4.49.0)
-# and break the DreamID-V pipeline. We install only the missing-from-dreamidv
-# deps explicitly in the RUN block above: sentencepiece + protobuf (T5 tokenizer
-# for HFEmbedder), einops, insightface, facexlib (PuLID FaceRestoreHelper), timm
-# (used by facexlib backbone). ftfy + opencv-python come from dreamidv's reqs.txt.
+# === Note on the extra Python deps in the RUN block above ===
+# sentencepiece + protobuf (T5 tokenizer), einops and torchsde are used by the
+# Wan-2.1 / DreamID-V pipeline. insightface/facexlib/timm were originally added
+# for the now-removed Flux+PuLID image path; left installed because they're small
+# and pruning them risks the swap pipeline — revisit on a later slimming pass.
 # diffusers / accelerate / transformers / torchvision come from dreamidv's reqs.txt.
 
 # === Post-swap branding assets (caption + watermark burn-in) ===
@@ -105,14 +90,12 @@ COPY assets/Inter-Medium.ttf  /app/assets/Inter-Medium.ttf
 COPY assets/logo-square2.svg  /app/assets/logo-square2.svg
 
 # === Server code ===
-# swap_server.py imports dreamidv_runtime + flux_pulid_runtime at startup —
-# all three must ship. render_overlay.py burns caption + watermark into each
-# MP4 (caption Anton, watermark Inter Medium per pod/render_overlay.py) and
-# brand_image() composes the same watermark onto Flux+PuLID JPEGs.
+# swap_server.py imports dreamidv_runtime + sliding_window at startup.
+# render_overlay.py burns the watermark "context bug" into downloaded MP4s
+# (caption Anton, watermark Inter Medium per pod/render_overlay.py).
 COPY swap_server.py        /root/swap_server.py
 COPY dreamidv_runtime.py   /root/dreamidv_runtime.py
 COPY sliding_window.py     /root/sliding_window.py
-COPY flux_pulid_runtime.py /root/flux_pulid_runtime.py
 COPY render_overlay.py     /root/render_overlay.py
 COPY precompute_pose.py    /root/precompute_pose.py
 

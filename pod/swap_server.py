@@ -76,21 +76,8 @@ DREAMIDV_FASTER_CKPT = WEIGHTS_DIR / "dreamidv_faster.pth"
 WAN21_DIR = WEIGHTS_DIR / "wan2.1"
 DWPOSE_DIR = DREAMIDV_DIR / "pose" / "models"
 
-# Flux + PuLID paths (for the cosplay-image 10/day quota — separate code path
-# from DreamID-V video swaps). See [[mainfeed_image_library_architecture]].
-#
-# All Flux+PuLID weights live under a single canonical dir which the runtime
-# symlinks to PULID_DIR/models/ — PuLID's pipeline_flux.py uses RELATIVE paths
-# like 'models/antelopev2/...' and 'models/pulid_flux_*.safetensors', and the
-# symlink keeps both the HF auto-downloads AND our pre-staged R2 mirror in the
-# same canonical location. See pod/flux_pulid_runtime.py for the chdir dance.
-FLUX_PULID_DIR = WEIGHTS_DIR / "flux_pulid"
-FLUX_CKPT = FLUX_PULID_DIR / "flux1-schnell.safetensors"
-AE_CKPT = FLUX_PULID_DIR / "ae.safetensors"
-PULID_FLUX_VERSION = os.environ.get("PULID_FLUX_VERSION", "v0.9.1")
-PULID_CKPT = FLUX_PULID_DIR / f"pulid_flux_{PULID_FLUX_VERSION}.safetensors"
-ANTELOPEV2_DIR = FLUX_PULID_DIR / "antelopev2"
-PULID_DIR = Path(os.environ.get("PULID_DIR", "/root/pulid"))
+# Flux/PuLID image-generation path REMOVED 2026-05-31 — Mainfeed is video-only
+# (DreamID-V head-swap). The pod serves /swap only; no /image, no Flux weights.
 
 # R2-related env (NO credentials — pod never holds R2 keys per
 # [[feedback_no_secrets_on_pod]]). Only the destination prefix names remain,
@@ -167,52 +154,14 @@ class SwapRequest(BaseModel):
     day: Optional[int] = None
 
 
-class ImageRequest(BaseModel):
-    """Request schema for the Flux+PuLID cosplay-image path (10/day quota).
-    Different format than SwapRequest — no target video, no caption (images
-    are watermark-only), 1:1 square output. See [[mainfeed_image_library_architecture]].
-    """
-    request_id: str = Field(..., min_length=1, max_length=128)
-    source_image_url: str            # user's selfie (HTTPS, fetched by pod)
-    prompt: str = Field(..., min_length=1, max_length=2000)
-    callback_url: str
-    # R2 key under R2_BUCKET where the output JPEG should land (e.g.
-    # "generated/u/<user_id>/<piece_id>.jpg"). If null, defaults to
-    # f"{R2_OUTPUT_PREFIX}{request_id}.jpg".
-    output_r2_key: Optional[str] = None
-    # Per [[mainfeed_image_library_architecture]] the format spec is locked
-    # to 1024x1024. Allow overrides for one-off experiments but default tight.
-    width: int = 1024
-    height: int = 1024
-    num_steps: int = 4              # Flux.1-schnell turbo default
-    guidance: float = 4.0
-    id_weight: float = 1.0          # PuLID identity injection strength
-    start_step: int = 0             # 0 = inject ID from first denoise step
-    base_seed: int = 42
-    # Watermark "context bug" inputs (handle → mainfeed.app/@handle, arc_name →
-    # share-name e.g. "LOST", day → DAY N). If handle is null the raw Flux
-    # output is uploaded (no watermark).
-    handle: Optional[str] = None
-    arc_name: Optional[str] = None
-    day: Optional[int] = None
-    # 24 GB cards (3090, 4090) can't hold the 24 GB Flux model + ~2 GB
-    # workspace at once — set aggressive_offload=true to shuttle Flux
-    # transformer blocks CPU↔GPU one-at-a-time during denoise. Slower
-    # (~5-10x per step) but only path that fits. 48 GB cards (A40, A6000)
-    # leave this false.
-    aggressive_offload: bool = False
-
-
 # ============ weight download (HF) ============
 
 # Weight manifest — used by both R2 and HF paths.
 # Each entry: (local_path, r2_key, hf_repo_or_None, hf_filename_or_None)
 # Filtered at runtime so DREAMIDV_ENABLED=0 pods don't waste cold-boot time
-# downloading 17 GB of DreamID-V/Wan-2.1 weights they'll never use, and
-# FLUX_PULID_ENABLED=0 pods skip the 26 GB Flux weight set.
+# downloading 17 GB of DreamID-V/Wan-2.1 weights they'll never use.
 def _weight_manifest():
     dreamidv_on = os.environ.get("DREAMIDV_ENABLED", "1") == "1"
-    flux_on     = os.environ.get("FLUX_PULID_ENABLED", "1") == "1"
 
     entries = []
     if dreamidv_on:
@@ -240,52 +189,7 @@ def _weight_manifest():
              None, None),
         ])
 
-    if flux_on:
-        entries.extend(_flux_pulid_manifest_entries())
     return entries
-
-
-def _flux_pulid_manifest_entries():
-    return [
-        # === Flux.1-schnell base model (~24 GB) ===
-        # Apache 2.0. Single safetensors file (NOT diffusers-format bundle —
-        # PuLID's flux/util.py uses its own custom loader, not FluxPipeline).
-        # Used by pod/flux_pulid_runtime.py for the 10/day cosplay-image quota.
-        (FLUX_CKPT,
-         f"{R2_WEIGHTS_PREFIX}flux_pulid/flux1-schnell.safetensors",
-         "black-forest-labs/FLUX.1-schnell", "flux1-schnell.safetensors"),
-        # === Flux autoencoder (~335 MB) ===
-        # Companion VAE for the Flux base. Same repo, different file.
-        (AE_CKPT,
-         f"{R2_WEIGHTS_PREFIX}flux_pulid/ae.safetensors",
-         "black-forest-labs/FLUX.1-schnell", "ae.safetensors"),
-        # === PuLID-FLUX adapter (~700 MB) ===
-        # Identity-injection cross-attention weights for Flux. License Apache 2.0
-        # (verified 2026-05-27, both PuLID source + weights).
-        (PULID_CKPT,
-         f"{R2_WEIGHTS_PREFIX}flux_pulid/pulid_flux_{PULID_FLUX_VERSION}.safetensors",
-         "guozinan/PuLID", f"pulid_flux_{PULID_FLUX_VERSION}.safetensors"),
-        # === InsightFace antelopev2 (face detection + embedding for PuLID) ===
-        # PuLID uses antelopev2 to extract the identity embedding from the
-        # user's selfie. Sourced from DIAMONIK7777/antelopev2 (the PuLID-
-        # canonical mirror — same SHAs as PuLID's own snapshot_download call,
-        # so pre-staging here makes that call a no-op at runtime).
-        (ANTELOPEV2_DIR / "1k3d68.onnx",
-         f"{R2_WEIGHTS_PREFIX}flux_pulid/antelopev2/1k3d68.onnx",
-         "DIAMONIK7777/antelopev2", "1k3d68.onnx"),
-        (ANTELOPEV2_DIR / "2d106det.onnx",
-         f"{R2_WEIGHTS_PREFIX}flux_pulid/antelopev2/2d106det.onnx",
-         "DIAMONIK7777/antelopev2", "2d106det.onnx"),
-        (ANTELOPEV2_DIR / "genderage.onnx",
-         f"{R2_WEIGHTS_PREFIX}flux_pulid/antelopev2/genderage.onnx",
-         "DIAMONIK7777/antelopev2", "genderage.onnx"),
-        (ANTELOPEV2_DIR / "glintr100.onnx",
-         f"{R2_WEIGHTS_PREFIX}flux_pulid/antelopev2/glintr100.onnx",
-         "DIAMONIK7777/antelopev2", "glintr100.onnx"),
-        (ANTELOPEV2_DIR / "scrfd_10g_bnkps.onnx",
-         f"{R2_WEIGHTS_PREFIX}flux_pulid/antelopev2/scrfd_10g_bnkps.onnx",
-         "DIAMONIK7777/antelopev2", "scrfd_10g_bnkps.onnx"),
-    ]
 
 
 def _exists_and_nonempty(p: Path, min_bytes: int = 1_000_000) -> bool:
@@ -303,8 +207,9 @@ def _worker_weight_download(r2_key: str, dst: Path, timeout: float = 1800.0) -> 
       - SWAP_POD_SECRET bearer auth (same secret the pod uses to /swap/upload)
 
     Stream-through: the worker doesn't buffer the body, and we don't buffer
-    either — chunks written to disk as they arrive. For 24 GB flux1-schnell.safetensors
-    this is the only viable path inside a Worker pipe.
+    either — chunks written to disk as they arrive. For multi-GB weight files
+    (e.g. the Wan-2.1 diffusion safetensors) this is the only viable path inside
+    a Worker pipe.
     """
     if not POD_SECRET:
         raise RuntimeError("SWAP_POD_SECRET not set; cannot authenticate to worker for weight fetch")
@@ -340,8 +245,6 @@ def ensure_weights() -> None:
     WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
     WAN21_DIR.mkdir(parents=True, exist_ok=True)
     DWPOSE_DIR.mkdir(parents=True, exist_ok=True)
-    FLUX_PULID_DIR.mkdir(parents=True, exist_ok=True)
-    ANTELOPEV2_DIR.mkdir(parents=True, exist_ok=True)
 
     manifest = _weight_manifest()
     missing = [m for m in manifest if not _exists_and_nonempty(m[0])]
@@ -461,12 +364,6 @@ async def callback(callback_url: str, payload: dict) -> None:
 # whose compiled artifacts only pay off when the model state persists.
 import dreamidv_runtime
 
-# flux_pulid_runtime is the parallel module for the 10/day cosplay-image
-# quota (Flux.1-schnell + PuLID-FLUX). Same warm-pipeline pattern as
-# dreamidv_runtime — loaded once at startup, generate_image() per /image call.
-# Both pipelines share the GPU, serialized through STATE.gpu_lock.
-import flux_pulid_runtime
-
 
 async def run_dreamidv(workdir: Path, src_image: Path, ref_video: Path,
                        sample_steps: int, sample_guide_scale_img: float,
@@ -540,97 +437,6 @@ async def run_dreamidv(workdir: Path, src_image: Path, ref_video: Path,
         raise RuntimeError(f"DreamID-V finished {elapsed}s but no output at {output}")
     print(f"[swap_server] DreamID-V finished in {elapsed}s, output {output.stat().st_size} bytes", flush=True)
     return output
-
-
-async def run_flux_pulid(workdir: Path, selfie: Path, prompt: str,
-                         width: int, height: int, num_steps: int, guidance: float,
-                         id_weight: float, start_step: int, seed: int,
-                         aggressive_offload: bool) -> Path:
-    """Run one image generation against the warm Flux+PuLID pipeline (in-process)."""
-    if not flux_pulid_runtime.is_ready():
-        raise RuntimeError("flux_pulid_runtime not initialized; call init() at startup")
-
-    output = workdir / "output.jpg"
-    print(f"[swap_server] running flux+pulid (warm) "
-          f"{width}x{height} steps={num_steps} id_weight={id_weight} seed={seed} "
-          f"agg_offload={aggressive_offload}", flush=True)
-    started = time.time()
-    await asyncio.get_event_loop().run_in_executor(
-        None,
-        lambda: flux_pulid_runtime.generate_image(
-            selfie_path=str(selfie),
-            prompt=prompt,
-            out_jpg=str(output),
-            seed=seed,
-            num_steps=num_steps,
-            guidance=guidance,
-            id_weight=id_weight,
-            start_step=start_step,
-            width=width,
-            height=height,
-            aggressive_offload=aggressive_offload,
-        ),
-    )
-    elapsed = round(time.time() - started, 2)
-    if not output.exists():
-        raise RuntimeError(f"Flux+PuLID finished {elapsed}s but no output at {output}")
-    print(f"[swap_server] Flux+PuLID finished in {elapsed}s, output {output.stat().st_size} bytes", flush=True)
-    return output
-
-
-async def run_image(req: ImageRequest) -> None:
-    """Generate one cosplay image (Flux + PuLID). Parallel to run_swap()
-    but for the 10/day image quota — see [[mainfeed_image_library_architecture]]."""
-    workdir = OUTPUT_DIR / req.request_id
-    workdir.mkdir(parents=True, exist_ok=True)
-    selfie = workdir / "source.jpg"
-    started = time.time()
-
-    r2_key = req.output_r2_key or f"{R2_OUTPUT_PREFIX}{req.request_id}.jpg"
-
-    try:
-        await download_to(req.source_image_url, selfie)
-        async with STATE.gpu_lock:
-            output = await run_flux_pulid(
-                workdir, selfie, req.prompt,
-                req.width, req.height, req.num_steps, req.guidance,
-                req.id_weight, req.start_step, req.base_seed,
-                req.aggressive_offload,
-            )
-
-        # Watermark "context bug" is intentionally NOT burned here — the in-app
-        # feed shows CLEAN images; the bug is applied only on download/share
-        # (render_overlay.brand_image, via the download path). `output` is the
-        # raw Flux render. content_type=image/jpeg drives the R2 object's MIME.
-        r2_meta = await upload_via_worker(output, r2_key, "image/jpeg")
-        print(f"[swap_server] {req.request_id} image → r2://{r2_meta['bucket']}/{r2_meta['key']} ({r2_meta['size']} bytes)", flush=True)
-
-        elapsed = round(time.time() - started, 2)
-        STATE.total_completed += 1
-        await callback(req.callback_url, {
-            "request_id": req.request_id,
-            "status": "completed",
-            "kind": "image",
-            "elapsed_sec": elapsed,
-            "output_bytes": output.stat().st_size if output.exists() else 0,
-            "r2_bucket": (r2_meta or {}).get("bucket"),
-            "r2_key":    (r2_meta or {}).get("key"),
-        })
-        print(f"[swap_server] {req.request_id} image OK in {elapsed}s", flush=True)
-    except Exception as e:
-        STATE.total_failed += 1
-        msg = str(e)[:1500]
-        print(f"[swap_server] {req.request_id} image FAILED: {msg}", flush=True)
-        await callback(req.callback_url, {
-            "request_id": req.request_id,
-            "status": "failed",
-            "kind": "image",
-            "error": msg,
-        })
-    finally:
-        STATE.in_flight -= 1
-        if os.environ.get("DEBUG_KEEP_WORKDIR", "0") != "1":
-            shutil.rmtree(workdir, ignore_errors=True)
 
 
 async def run_swap(req: SwapRequest) -> None:
@@ -729,40 +535,11 @@ async def on_startup() -> None:
     print(f"[swap_server] worker upload URL: {WORKER_UPLOAD_URL}", flush=True)
     print(f"[swap_server] worker weight URL: {WORKER_WEIGHT_URL}", flush=True)
 
-    # Load Flux + PuLID FIRST. flux_pulid_runtime.init() chdir's temporarily
-    # into PULID_DIR to satisfy PuLID's relative-path constructors, then
-    # restores cwd before returning. dreamidv_runtime.init() below does its
-    # own permanent chdir(DREAMIDV_DIR) — order matters: PuLID first so it
-    # can restore cwd cleanly, DreamID-V second so its chdir is the final
-    # state (per-request DWPose paths are joined against the ref_video dir,
-    # not cwd, but DreamID-V's internal model loaders use a relative
-    # 'dreamidv_wan_faster/context.pth' resolved at init time only).
-    if os.environ.get("FLUX_PULID_ENABLED", "1") == "1":
-        print("[swap_server] loading Flux + PuLID pipeline (one-time)...", flush=True)
-        load_started = time.time()
-        try:
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: flux_pulid_runtime.init(
-                    weights_dir=str(WEIGHTS_DIR),
-                    pulid_dir=str(PULID_DIR),
-                ),
-            )
-            print(f"[swap_server] Flux + PuLID loaded in {round(time.time() - load_started, 1)}s", flush=True)
-        except Exception as e:
-            # Non-fatal: pod can still serve /swap (videos) even if Flux+PuLID
-            # fails to load. /image will return 503 until it's fixed.
-            STATE.last_error = f"flux_pulid init failed: {str(e)[:500]}"
-            print(f"[swap_server] WARN Flux+PuLID init FAILED — /image disabled: {e}", flush=True)
-    else:
-        print("[swap_server] FLUX_PULID_ENABLED=0 — skipping Flux+PuLID load (image endpoint disabled)", flush=True)
-
     # Load DreamID-V once into GPU memory. Replaces the previous
     # subprocess-per-swap behavior — saves ~10-15s of cold-start per request
-    # and lets future torch.compile/TRT optimizations cache across swaps.
-    # Gated behind DREAMIDV_ENABLED=1 so image-only test pods on tight-VRAM
-    # cards (e.g. 4090 24 GB) can boot Flux+PuLID without DreamID-V's ~17 GB
-    # eating into the headroom Flux needs during denoise.
+    # and lets torch.compile artifacts cache across swaps. dreamidv_runtime.init()
+    # does a permanent chdir(DREAMIDV_DIR) (DreamID-V's model loaders resolve a
+    # relative 'dreamidv_wan_faster/context.pth' at init time).
     if os.environ.get("DREAMIDV_ENABLED", "1") == "1":
         print("[swap_server] loading DreamID-V pipeline (one-time)...", flush=True)
         load_started = time.time()
@@ -776,12 +553,9 @@ async def on_startup() -> None:
             )
             print(f"[swap_server] DreamID-V loaded in {round(time.time() - load_started, 1)}s", flush=True)
         except Exception as e:
-            # Non-fatal — pod can still serve /image (Flux+PuLID) even when
-            # DreamID-V fails to load. Common cause: insufficient VRAM (24 GB
-            # cards can't host Flux + DreamID-V concurrently). /swap returns
-            # 503 in that case (see guard in the /swap endpoint).
+            # Fatal for swaps — /swap returns 503 (see guard in the /swap endpoint).
             STATE.last_error = f"dreamidv init failed: {str(e)[:500]}"
-            print(f"[swap_server] WARN DreamID-V init FAILED — /swap disabled, /image still works: {e}", flush=True)
+            print(f"[swap_server] WARN DreamID-V init FAILED — /swap disabled: {e}", flush=True)
     else:
         print("[swap_server] DREAMIDV_ENABLED=0 — skipping DreamID-V load (swap endpoint disabled)", flush=True)
 
@@ -814,34 +588,13 @@ async def swap(req: SwapRequest, background: BackgroundTasks,
     if not STATE.model_loaded:
         raise HTTPException(503, "model not loaded yet, try again in 30s")
     if not dreamidv_runtime.is_ready():
-        raise HTTPException(503, "dreamidv not loaded (check DREAMIDV_ENABLED env); /image remains available")
+        raise HTTPException(503, "dreamidv not loaded (check DREAMIDV_ENABLED env)")
     STATE.in_flight += 1
     background.add_task(run_swap, req)
     return {
         "request_id": req.request_id,
         "status": "processing",
         "in_flight": STATE.in_flight,
-    }
-
-
-@app.post("/image", status_code=202)
-async def image(req: ImageRequest, background: BackgroundTasks,
-                authorization: str = Header(default="")) -> dict:
-    """Queue one Flux+PuLID cosplay-image generation. Async — returns 202
-    immediately and posts to req.callback_url when done. See
-    [[mainfeed_image_library_architecture]] for the format spec."""
-    require_auth(authorization)
-    if not STATE.model_loaded:
-        raise HTTPException(503, "model not loaded yet, try again in 30s")
-    if not flux_pulid_runtime.is_ready():
-        raise HTTPException(503, "flux+pulid not loaded (check startup logs); /swap remains available")
-    STATE.in_flight += 1
-    background.add_task(run_image, req)
-    return {
-        "request_id": req.request_id,
-        "status": "processing",
-        "in_flight": STATE.in_flight,
-        "kind": "image",
     }
 
 

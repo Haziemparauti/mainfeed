@@ -76,24 +76,17 @@ async function pickStock(env, { arc, wardrobePhase, scene, bucket, gender }) {
 // Public HTTPS URL the pod can fetch for an R2 key under the content/stock buckets.
 const stockUrl = (r2Key) => `${API}/public/stock/${String(r2Key).split('/').pop()}`;
 
-// Fill the manifest prompt's {subject} slot from the user's bucket/gender.
-function fillPrompt(prompt, { gender, bucket }) {
-  const subject = gender === 'm' ? 'a man' : 'a woman';
-  return String(prompt || '').replaceAll('{subject}', subject).replaceAll('{bucket_phrase}', subject);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatch ONE manifest piece: insert the generated_pieces row (clean media,
 // status=processing, with story coords + reveal_at + the in-app caption), then
-// fire the pod. video/gif → /swap, image → /image.
+// fire the pod /swap (sliding-window long_swap). Video-only product — every
+// piece is a head-swap mp4 (or the no-swap shared scenery clip).
 async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bakeJobId) {
   const pieceId = uid();
   const ts = now();
   const gender = genderOf(user.appearance_bucket, user.gender);
-  const isImage = piece.format === 'image';
-  const ext = isImage ? 'jpg' : 'mp4';
-  const r2Key = `generated/${pieceId}.${ext}`;
-  const type = piece.format; // 'video' | 'gif' | 'image'
+  const r2Key = `generated/${pieceId}.mp4`;
+  const type = piece.format || 'video';
 
   // Pre-insert the row so the callback has a target and the feed can gate by it.
   // caption = the in-app monologue (shown by the app, NEVER burned in).
@@ -102,11 +95,9 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
        (id, user_id, diary_entry_id, type, caption, r2_key, mime_type,
         generation_provider, created_at, download_count, share_count,
         status, arc, day, scene, wardrobe_phase, reveal_at, bake_job_id)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 0, 0, 'processing', ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, NULL, ?, ?, ?, 'video/mp4', 'dreamidv-faster', ?, 0, 0, 'processing', ?, ?, ?, ?, ?, ?)`
   ).bind(
     pieceId, user.id, type, piece.caption || '', r2Key,
-    isImage ? 'image/jpeg' : 'video/mp4',
-    isImage ? 'flux-pulid' : 'dreamidv-faster',
     ts, ARC, day, piece.scene, wardrobePhase, revealAt, bakeJobId,
   ).run();
 
@@ -118,7 +109,7 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
     if (!sc) { await markFailed(env, pieceId, `no_stock_for_scene_${piece.scene}`); return; }
     const obj = await env.STOCK.get(sc.r2_key);
     if (!obj) { await markFailed(env, pieceId, 'noswap_stock_missing'); return; }
-    await env.CONTENT.put(r2Key, obj.body, { httpMetadata: { contentType: isImage ? 'image/jpeg' : 'video/mp4' } });
+    await env.CONTENT.put(r2Key, obj.body, { httpMetadata: { contentType: 'video/mp4' } });
     await env.DB.prepare(`UPDATE generated_pieces SET status='ready' WHERE id=?`).bind(pieceId).run();
     return;
   }
@@ -138,50 +129,29 @@ async function dispatchPiece(env, user, day, wardrobePhase, piece, revealAt, bak
   const base = env.SWAP_POD_URL.replace(/\/+$/, '');
 
   try {
-    let res;
-    if (isImage) {
-      res = await podFetch(`${base}/image`, secret, {
-        request_id: pieceId,
-        source_image_url: sourceImageUrl,
-        prompt: fillPrompt(piece.prompt, { gender, bucket: user.appearance_bucket }),
-        callback_url: `${API}/api/swap/complete`,
-        output_r2_key: r2Key,
-        width: 1024, height: 1024, num_steps: 4,   // Flux.1-schnell turbo, native
-        // Per-piece PuLID tuning (manifest): lower id_weight + later start_step
-        // let the COMPOSITION/pose win over PuLID's front-face pull (fixes
-        // "always looking at camera" + bent necks). Defaults match the pod.
-        id_weight: Number.isFinite(piece.id_weight) ? piece.id_weight : 1.0,
-        start_step: Number.isFinite(piece.start_step) ? piece.start_step : 0,
-        // arc_name/day carried for the download-brand path (bake uploads clean)
-        handle: user.handle, arc_name: ARC_SHARE, day,
-      });
-    } else {
-      const stock = await pickStock(env, {
-        arc: ARC, wardrobePhase, scene: piece.scene, bucket: user.appearance_bucket, gender,
-      });
-      if (!stock) { await markFailed(env, pieceId, `no_stock_for_scene_${piece.scene}`); return; }
-      res = await podFetch(`${base}/swap`, secret, {
-        request_id: pieceId,
-        source_image_url: sourceImageUrl,
-        target_video_url: stockUrl(stock.r2_key),
-        // DWPose cache: hand the pod the precomputed pose+mask so it skips the
-        // ~30s inline pass (render_overlay/dreamidv_runtime read these).
-        target_pose_url: stock.pose_r2_key ? stockUrl(stock.pose_r2_key) : null,
-        target_mask_url: stock.mask_r2_key ? stockUrl(stock.mask_r2_key) : null,
-        callback_url: `${API}/api/swap/complete`,
-        output_r2_key: r2Key,
-        sample_steps: 16, sample_guide_scale_img: 4.0,
-        // LOCKED format: 1:1 square @ 512² (720² dial-up if soft). 24fps export →
-        // video frame_num 121 (=4·30+1, true 5.0s) swaps the WHOLE clip so the
-        // reaction beat (which lands at the END of each Seedance shot) isn't
-        // truncated. 5s/121 is past Wan's ~81-frame trained window — the Day-1
-        // test eyeballs identity hold over the back half; if it drifts, trim
-        // toward ~4s (frame_num 97). gif stays a short reaction loop.
-        size: '512*512',
-        frame_num: Number.isFinite(piece.frame_num) ? piece.frame_num : (piece.format === 'gif' ? 37 : 121),
-        handle: user.handle, arc_name: ARC_SHARE, day,
-      });
-    }
+    const stock = await pickStock(env, {
+      arc: ARC, wardrobePhase, scene: piece.scene, bucket: user.appearance_bucket, gender,
+    });
+    if (!stock) { await markFailed(env, pieceId, `no_stock_for_scene_${piece.scene}`); return; }
+    // LOCKED: 9:16 vertical @ 720*1280, sliding-window long_swap (handles the
+    // 10-15s Seedance-2 hero clips past Wan's ~81-frame window) + source audio.
+    // This is the config proven "amazing" on test2 scene 2 (2026-05-31); the pod
+    // derives the window plan from the clip's own length, so no frame_num here.
+    const res = await podFetch(`${base}/swap`, secret, {
+      request_id: pieceId,
+      source_image_url: sourceImageUrl,
+      target_video_url: stockUrl(stock.r2_key),
+      // DWPose cache: hand the pod the precomputed pose+mask so it skips the
+      // ~30s inline pass (dreamidv_runtime reads these).
+      target_pose_url: stock.pose_r2_key ? stockUrl(stock.pose_r2_key) : null,
+      target_mask_url: stock.mask_r2_key ? stockUrl(stock.mask_r2_key) : null,
+      callback_url: `${API}/api/swap/complete`,
+      output_r2_key: r2Key,
+      sample_steps: 16, sample_guide_scale_img: 4.0,
+      size: '720*1280',
+      long_swap: true,
+      handle: user.handle, arc_name: ARC_SHARE, day,
+    });
     if (!res.ok) {
       const t = await res.text().catch(() => '');
       await markFailed(env, pieceId, `pod_${res.status}: ${t.slice(0, 120)}`);
